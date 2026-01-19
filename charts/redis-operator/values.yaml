@@ -1,0 +1,42 @@
+replicaCount: 1
+
+image:
+  repository: troke12/redis-operator
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+redisCluster:
+  enabled: false
+  name: redis-cluster
+  namespace: ""
+  replicas: 3
+  minReady: 3
+  autoRebalance: true
+  serviceName: redis-headless
+  statefulSetName: redis
+  passwordSecretName: redis-auth
+  passwordSecretKey: REDIS_PASSWORD
+  password: "" # optional; if set, a Secret will be created

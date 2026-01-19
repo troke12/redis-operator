@@ -1,0 +1,34 @@
+{{- if .Values.redisCluster.enabled }}
+{{- $ns := default .Release.Namespace .Values.redisCluster.namespace }}
+{{- if .Values.redisCluster.password }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.redisCluster.passwordSecretName }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: {{ include "redis-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+type: Opaque
+stringData:
+  {{ .Values.redisCluster.passwordSecretKey }}: "{{ .Values.redisCluster.password }}"
+---
+{{- end }}
+apiVersion: redis.redis-operator.io/v1alpha1
+kind: RedisCluster
+metadata:
+  name: {{ .Values.redisCluster.name }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: {{ include "redis-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.redisCluster.replicas }}
+  minReady: {{ .Values.redisCluster.minReady }}
+  autoRebalance: {{ .Values.redisCluster.autoRebalance }}
+  serviceName: {{ .Values.redisCluster.serviceName }}
+  statefulSetName: {{ .Values.redisCluster.statefulSetName }}
+  passwordSecretRef:
+    name: {{ .Values.redisCluster.passwordSecretName }}
+    key: {{ .Values.redisCluster.passwordSecretKey }}
+{{- end }}

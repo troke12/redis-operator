@@ -1,0 +1,10 @@
+apiVersion: v2
+name: redis-operator
+description: Helm chart to deploy the Redis Operator and an optional RedisCluster
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/troke12/redis-operator
+maintainers:
+  - name: troke12
+    email: ochi@troke.id
