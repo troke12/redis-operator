@@ -48,12 +48,18 @@ data:
     # Read password from secret env
     REDIS_PASSWORD="${REDIS_PASSWORD}"
 
-    # Template redis.conf with actual values
-    sed -i "s|requirepass.*|requirepass ${REDIS_PASSWORD}|g" /etc/redis/redis.conf
-    sed -i "s|masterauth.*|masterauth ${REDIS_PASSWORD}|g" /etc/redis/redis.conf
-    echo "cluster-announce-hostname ${CLUSTER_HOSTNAME}" >> /etc/redis/redis.conf
+    # Copy config to writable location (ConfigMap mounts are read-only)
+    cp /etc/redis/redis.conf /data/redis.conf
 
-    # Start Redis
-    exec redis-server /etc/redis/redis.conf
+    # Template redis.conf with actual values using awk (avoids sed delimiter escaping issues)
+    awk -v pwd="${REDIS_PASSWORD}" '
+      /^[[:space:]]*requirepass/ { print "requirepass " pwd; next }
+      /^[[:space:]]*masterauth/ { print "masterauth " pwd; next }
+      { print }
+    ' /data/redis.conf > /data/redis.conf.tmp && mv /data/redis.conf.tmp /data/redis.conf
+    echo "cluster-announce-hostname ${CLUSTER_HOSTNAME}" >> /data/redis.conf
+
+    # Start Redis using the modified config
+    exec redis-server /data/redis.conf
 {{- end }}
 

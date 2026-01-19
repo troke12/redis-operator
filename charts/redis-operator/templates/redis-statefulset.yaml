@@ -19,6 +19,14 @@ spec:
       labels:
         app: redis
     spec:
+      volumes:
+        - name: config
+          configMap:
+            name: redis-config
+        - name: entrypoint
+          configMap:
+            name: redis-config
+            defaultMode: 0755
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
