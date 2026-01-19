@@ -1,0 +1,59 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis
+    app.kubernetes.io/name: {{ include "redis-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  redis.conf: |
+    # Cluster mode
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 5000
+
+    # Persistence
+    appendonly yes
+    appendfsync everysec
+
+    # Network
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+    requirepass CHANGEME_PASSWORD
+    masterauth CHANGEME_PASSWORD
+
+    # Cluster announce (will be templated by entrypoint)
+    cluster-announce-port 6379
+    cluster-announce-bus-port 16379
+    cluster-preferred-endpoint-type hostname
+
+    # Logging
+    loglevel notice
+
+  entrypoint.sh: |
+    #!/bin/sh
+    set -e
+
+    # Get pod name and namespace from env (set by StatefulSet)
+    POD_NAME="${HOSTNAME}"
+    POD_NAMESPACE="${POD_NAMESPACE:-{{ .Release.Namespace }}}"
+
+    # Build hostname
+    CLUSTER_HOSTNAME="${POD_NAME}.{{ .Values.redisCluster.serviceName }}.${POD_NAMESPACE}.svc.cluster.local"
+
+    # Read password from secret env
+    REDIS_PASSWORD="${REDIS_PASSWORD}"
+
+    # Template redis.conf with actual values
+    sed -i "s|requirepass.*|requirepass ${REDIS_PASSWORD}|g" /etc/redis/redis.conf
+    sed -i "s|masterauth.*|masterauth ${REDIS_PASSWORD}|g" /etc/redis/redis.conf
+    echo "cluster-announce-hostname ${CLUSTER_HOSTNAME}" >> /etc/redis/redis.conf
+
+    # Start Redis
+    exec redis-server /etc/redis/redis.conf
+{{- end }}
+
