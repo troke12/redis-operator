@@ -27,9 +27,52 @@ The operator consists of:
 - Go 1.21+ (for building)
 - StorageClass available for persistent volumes
 
-## Quick Start
+## Installation
 
-### 1. Deploy Redis Resources
+### Option A: Helm (recommended)
+
+The operator is published as a Helm chart and Docker image.
+
+- **Docker image**: [troke12/redis-operator](https://hub.docker.com/r/troke12/redis-operator)
+- **Helm repo**: [https://troke12.github.io/redis-operator](https://troke12.github.io/redis-operator)
+
+1. Add the Helm repo and install the operator (CRDs are installed by the chart):
+
+```bash
+helm repo add troke12 https://troke12.github.io/redis-operator
+helm repo update
+
+# install operator only
+helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace
+```
+
+2. (Optional) Enable a `RedisCluster` managed by the operator (and create a password Secret automatically):
+
+```bash
+helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace \
+  --set redisCluster.enabled=true \
+  --set redisCluster.password='changeme'
+```
+
+You can override the operator image and other settings via `values.yaml`, for example:
+
+```bash
+helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace \
+  --set image.repository=troke12/redis-operator \
+  --set image.tag=latest
+```
+
+### Option B: Raw manifests
+
+You can still deploy everything using the provided Kubernetes manifests.
+
+1. Deploy Redis resources:
 
 ```bash
 kubectl apply -f manifests/redis/
@@ -41,7 +84,7 @@ This creates:
 - ConfigMap with Redis configuration
 - StatefulSet with 3 Redis pods
 
-### 2. Deploy Operator
+2. Deploy operator:
 
 ```bash
 # Install CRD
@@ -50,18 +93,18 @@ kubectl apply -f config/crd/bases/
 # Install RBAC
 kubectl apply -f config/rbac/
 
-# Build and deploy operator (or use your preferred method)
-make docker-build docker-push IMG=your-registry/redis-operator:latest
+# Build and deploy operator
+make docker-build docker-push IMG=troke12/redis-operator:latest
 kubectl apply -f config/manager/manager.yaml
 ```
 
-### 3. Create RedisCluster Resource
+3. Create RedisCluster resource:
 
 ```bash
 kubectl apply -f manifests/redis/rediscluster.yaml
 ```
 
-### 4. Watch Cluster Status
+4. Watch cluster status:
 
 ```bash
 kubectl get rediscluster redis-cluster -w
