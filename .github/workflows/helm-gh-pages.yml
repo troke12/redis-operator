@@ -26,6 +26,24 @@ jobs:
 
       - name: Package chart
         run: |
+          TAG="${GITHUB_REF_NAME:-dev}"
+          if [[ "${TAG}" == v* ]]; then
+            VERSION="${TAG#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+
+          echo "Using chart version=${VERSION}, appVersion=${TAG}"
+
+          # Bump Chart.yaml for this package (not committed)
+          sed -i -E "s/^version: .*/version: ${VERSION}/" charts/redis-operator/Chart.yaml
+          sed -i -E "s/^appVersion: .*/appVersion: \"${TAG}\"/" charts/redis-operator/Chart.yaml
+
+          # Set image tag in values.yaml to match appVersion for released charts
+          if [[ "${TAG}" == v* ]]; then
+            sed -i -E "s/^  tag: .*/  tag: ${TAG}/" charts/redis-operator/values.yaml
+          fi
+
           mkdir -p docs
           helm package charts/redis-operator --destination docs
           helm repo index docs --url https://troke12.github.io/redis-operator
