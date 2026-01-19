@@ -33,8 +33,8 @@ The operator consists of:
 
 The operator is published as a Helm chart and Docker image.
 
-- **Docker image**: `[troke12/redis-operator](https://hub.docker.com/r/troke12/redis-operator)`
-- **Helm repo**: `[https://troke12.github.io/redis-operator](https://troke12.github.io/redis-operator)`
+- **Docker image**: [troke12/redis-operator](https://hub.docker.com/r/troke12/redis-operator)
+- **Helm repo**: [https://troke12.github.io/redis-operator](https://troke12.github.io/redis-operator)
 
 1. Add the Helm repo and install the operator (CRDs are installed by the chart):
 
