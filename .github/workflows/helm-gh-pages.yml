@@ -2,7 +2,6 @@ name: Publish Helm Chart to GitHub Pages
 
 on:
   push:
-    branches: [main, master]
     tags:
       - "v*"
   workflow_dispatch:
@@ -18,6 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -61,12 +63,7 @@ jobs:
           # install
           helm install redis-operator troke12/redis-operator --namespace redis-operator --create-namespace</code></pre>
 
-              <h2>Files</h2>
-              <ul>
-                <li><a href="./index.yaml">index.yaml</a></li>
-                <li><a href="./redis-operator-latest.tgz">redis-operator-latest.tgz</a> (symlink to current)</li>
-                <li><a href="./${CHART_BASENAME}">${CHART_BASENAME}</a></li>
-              </ul>
+              <p class="hint">Helm repo URL: https://troke12.github.io/redis-operator</p>
             </body>
           </html>
           EOF
