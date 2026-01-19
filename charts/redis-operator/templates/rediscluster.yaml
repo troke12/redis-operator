@@ -1,4 +1,5 @@
 {{- if .Values.redisCluster.enabled }}
+{{- /* If we deploy Redis infra, everything must live in the release namespace */ -}}
 {{- $ns := ternary .Release.Namespace (default .Release.Namespace .Values.redisCluster.namespace) .Values.redis.enabled }}
 apiVersion: redis.redis-operator.io/v1alpha1
 kind: RedisCluster
