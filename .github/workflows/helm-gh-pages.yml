@@ -27,6 +27,49 @@ jobs:
           mkdir -p docs
           helm package charts/redis-operator --destination docs
           helm repo index docs --url https://troke12.github.io/redis-operator
+          
+          CHART_TGZ="$(ls -1 docs/*.tgz | head -n 1)"
+          CHART_BASENAME="$(basename "${CHART_TGZ}")"
+          # stable link for humans/tools
+          ln -sf "${CHART_BASENAME}" docs/redis-operator-latest.tgz || true
+
+          cat > docs/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>troke12 Helm Repo</title>
+              <style>
+                body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; margin: 40px; max-width: 900px; }
+                code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+                pre { background: #0b1020; color: #e6e6e6; padding: 16px; border-radius: 10px; overflow: auto; }
+                a { color: #2563eb; text-decoration: none; }
+                a:hover { text-decoration: underline; }
+                .hint { color: #374151; }
+              </style>
+            </head>
+            <body>
+              <h1>troke12 Helm Repository</h1>
+              <p class="hint">Static Helm repo hosted on GitHub Pages.</p>
+
+              <h2>Use</h2>
+              <pre><code>helm repo add troke12 https://troke12.github.io/redis-operator
+          helm repo update
+          helm search repo troke12
+
+          # install
+          helm install redis-operator troke12/redis-operator --namespace redis-operator --create-namespace</code></pre>
+
+              <h2>Files</h2>
+              <ul>
+                <li><a href="./index.yaml">index.yaml</a></li>
+                <li><a href="./redis-operator-latest.tgz">redis-operator-latest.tgz</a> (symlink to current)</li>
+                <li><a href="./${CHART_BASENAME}">${CHART_BASENAME}</a></li>
+              </ul>
+            </body>
+          </html>
+          EOF
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
