@@ -199,7 +199,16 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			if err := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); err != nil {
 				// If the node is already initialized/non-empty, skip to avoid tight loop
 				if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
-					logger.Info("Skip add-node: node already initialized", "endpoint", endpoint, "error", err)
+					logger.Info("Add-node refused: node not empty; trying cluster reset", "endpoint", endpoint, "error", err)
+					if resetErr := runner.ClusterResetHard(ctx, endpoint); resetErr != nil {
+						logger.Error(resetErr, "Failed to cluster reset node; will skip add-node", "endpoint", endpoint)
+						continue
+					}
+					if retryErr := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); retryErr != nil {
+						logger.Error(retryErr, "Retry add-node failed after reset", "endpoint", endpoint)
+						continue
+					}
+					logger.Info("Add-node succeeded after reset", "endpoint", endpoint)
 				} else {
 					logger.Error(err, "Failed to add node", "endpoint", endpoint)
 				}
