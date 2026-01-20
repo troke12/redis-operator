@@ -178,6 +178,10 @@ func (r *Runner) ClusterNodes(ctx context.Context, endpoint string) ([]NodeInfo,
 		if line == "" {
 			continue
 		}
+		// Skip redis-cli warning lines (e.g., "Warning: Using a password...")
+		if strings.HasPrefix(line, "Warning:") {
+			continue
+		}
 
 		parts := strings.Fields(line)
 		if len(parts) < 2 {
@@ -186,6 +190,10 @@ func (r *Runner) ClusterNodes(ctx context.Context, endpoint string) ([]NodeInfo,
 
 		nodeID := parts[0]
 		addr := parts[1]
+		// addr should contain host:port; skip malformed lines
+		if !strings.Contains(addr, ":") {
+			continue
+		}
 		flags := ""
 		if len(parts) > 2 {
 			flags = parts[2]

@@ -24,5 +24,10 @@ sed "s|^[[:space:]]*requirepass.*|requirepass ${ESCAPED_PWD}|" /data/redis.conf 
 sed "s|^[[:space:]]*masterauth.*|masterauth ${ESCAPED_PWD}|" /data/redis.conf.tmp > /data/redis.conf
 rm -f /data/redis.conf.tmp
 
+# Set cluster announce IP (use Pod IP if available) so nodes advertise reachable addresses
+if [ -n "${POD_IP:-}" ]; then
+  printf "\ncluster-announce-ip %s\n" "${POD_IP}" >> /data/redis.conf
+fi
+
 # Execute the original command (redis-server /data/redis.conf)
 exec "$@"
