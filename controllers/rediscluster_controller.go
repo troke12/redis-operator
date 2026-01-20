@@ -177,6 +177,13 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		clusterNodes = nil
 	}
 
+	// If we cannot see cluster nodes, avoid attempting add-node to prevent
+	// repeated "node is not empty" loops; wait for next reconcile when
+	// permissions/network are healthy.
+	if clusterNodes == nil {
+		return r.updateStatus(ctx, redisCluster, "Pending", clusterState, "waiting for cluster nodes visibility")
+	}
+
 	// Build endpoint to node ID map
 	endpointToNodeID := make(map[string]string)
 	nodeIDToEndpoint := make(map[string]string)
@@ -190,7 +197,12 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if _, exists := endpointToNodeID[endpoint]; !exists {
 			logger.Info("Adding node to cluster", "endpoint", endpoint)
 			if err := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); err != nil {
-				logger.Error(err, "Failed to add node", "endpoint", endpoint)
+				// If the node is already initialized/non-empty, skip to avoid tight loop
+				if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
+					logger.Info("Skip add-node: node already initialized", "endpoint", endpoint, "error", err)
+				} else {
+					logger.Error(err, "Failed to add node", "endpoint", endpoint)
+				}
 				continue
 			}
 			// Rebalance if enabled
