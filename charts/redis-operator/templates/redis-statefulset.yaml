@@ -27,10 +27,6 @@ spec:
         - name: config
           configMap:
             name: redis-config
-        - name: entrypoint
-          configMap:
-            name: redis-config
-            defaultMode: 0755
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
@@ -43,9 +39,6 @@ spec:
             - name: config
               mountPath: /etc/redis/redis.conf
               subPath: redis.conf
-            - name: entrypoint
-              mountPath: /entrypoint.sh
-              subPath: entrypoint.sh
             - name: data
               mountPath: /data
           env:
@@ -58,7 +51,8 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.redisCluster.passwordSecretName }}
                   key: {{ .Values.redisCluster.passwordSecretKey }}
-          command: ["/bin/sh", "/entrypoint.sh"]
+                  optional: false
+          args: ["/data/redis.conf"]
           readinessProbe:
             exec:
               command:

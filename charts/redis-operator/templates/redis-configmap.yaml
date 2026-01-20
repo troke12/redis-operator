@@ -14,56 +14,50 @@ metadata:
     meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
 data:
   redis.conf: |
-    # Cluster mode
-    cluster-enabled yes
-    cluster-config-file nodes.conf
-    cluster-node-timeout 5000
-
-    # Persistence
-    appendonly yes
-    appendfsync everysec
-
     # Network
     bind 0.0.0.0
     protected-mode yes
     port 6379
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+
+    # General
+    daemonize no
+    pidfile /var/run/redis_6379.pid
+    loglevel notice
+    logfile ""
+    databases 16
+
+    # Persistence
+    save ""
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+
+    # AOF
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    aof-load-truncated yes
+    aof-use-rdb-preamble yes
+
+    # Security (will be templated by entrypoint)
     requirepass CHANGEME_PASSWORD
     masterauth CHANGEME_PASSWORD
 
-    # Cluster announce (will be templated by entrypoint)
+    # Cluster mode
+    cluster-enabled yes
+    cluster-config-file /data/nodes.conf
+    cluster-node-timeout 5000
+
+    # Cluster announce (for Kubernetes/Docker NAT support)
     cluster-announce-port 6379
     cluster-announce-bus-port 16379
-    cluster-preferred-endpoint-type hostname
-
-    # Logging
-    loglevel notice
-
-  entrypoint.sh: |
-    #!/bin/sh
-    set -e
-
-    # Get pod name and namespace from env (set by StatefulSet)
-    POD_NAME="${HOSTNAME}"
-    POD_NAMESPACE="${POD_NAMESPACE:-{{ .Release.Namespace }}}"
-
-    # Build hostname
-    CLUSTER_HOSTNAME="${POD_NAME}.{{ .Values.redisCluster.serviceName }}.${POD_NAMESPACE}.svc.cluster.local"
-
-    # Read password from secret env
-    REDIS_PASSWORD="${REDIS_PASSWORD}"
-
-    # Copy config to writable location (ConfigMap mounts are read-only)
-    cp /etc/redis/redis.conf /data/redis.conf
-
-    # Template redis.conf with actual values using awk (avoids sed delimiter escaping issues)
-    awk -v pwd="${REDIS_PASSWORD}" '
-      /^[[:space:]]*requirepass/ { print "requirepass " pwd; next }
-      /^[[:space:]]*masterauth/ { print "masterauth " pwd; next }
-      { print }
-    ' /data/redis.conf > /data/redis.conf.tmp && mv /data/redis.conf.tmp /data/redis.conf
-    echo "cluster-announce-hostname ${CLUSTER_HOSTNAME}" >> /data/redis.conf
-
-    # Start Redis using the modified config
-    exec redis-server /data/redis.conf
 {{- end }}
 

@@ -1,0 +1,8 @@
+FROM redis:6.2-alpine
+
+# Copy entrypoint script
+COPY docker/redis-entrypoint.sh /usr/local/bin/redis-entrypoint.sh
+RUN chmod +x /usr/local/bin/redis-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/redis-entrypoint.sh"]
+CMD ["redis-server", "/data/redis.conf"]

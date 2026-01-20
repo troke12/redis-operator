@@ -30,7 +30,7 @@ affinity: {}
 
 redis:
   enabled: true
-  image: redis:6.2-alpine
+  image: troke12/redis-cluster:6.2-alpine
   replicas: 3
   storage:
     size: 1Gi
