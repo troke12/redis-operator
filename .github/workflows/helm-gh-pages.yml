@@ -38,7 +38,7 @@ jobs:
             echo "Derived VERSION is empty from tag '${TAG}'. Aborting."
             exit 1
           fi
-          echo "Using chart version=${VERSION}, appVersion=${TAG}"
+          echo "Using chart version=${VERSION}, appVersion=${VERSION}"
 
           # Bump Chart.yaml for this package (not committed)
           sed -i -E "s/^version: .*/version: ${VERSION}/" charts/redis-operator/Chart.yaml
@@ -46,6 +46,9 @@ jobs:
 
           # Set image tag in values.yaml to match Docker image tag (no leading "v")
           sed -i -E "s/^  tag: .*/  tag: ${VERSION}/" charts/redis-operator/values.yaml
+
+          # Copy repo README into chart so it is bundled in the .tgz
+          cp README.md charts/redis-operator/README.md
 
           mkdir -p docs
           helm package charts/redis-operator --destination docs
