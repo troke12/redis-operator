@@ -8,6 +8,10 @@ metadata:
     app: redis
     app.kubernetes.io/name: {{ include "redis-operator.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
 data:
   redis.conf: |
     # Cluster mode
