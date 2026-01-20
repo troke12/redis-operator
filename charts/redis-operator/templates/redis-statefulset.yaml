@@ -30,6 +30,7 @@ spec:
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
+          imagePullPolicy: {{ .Values.redis.imagePullPolicy | default "Always" }}
           ports:
             - name: client
               containerPort: 6379
