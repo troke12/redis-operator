@@ -199,7 +199,11 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			if err := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); err != nil {
 				// If the node is already initialized/non-empty, skip to avoid tight loop
 				if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
-					logger.Info("Add-node refused: node not empty; trying cluster reset", "endpoint", endpoint, "error", err)
+					logger.Info("Add-node refused: node not empty; trying flushall + cluster reset", "endpoint", endpoint, "error", err)
+					if flushErr := runner.FlushAll(ctx, endpoint); flushErr != nil {
+						logger.Error(flushErr, "Failed to flushall before reset; will skip add-node", "endpoint", endpoint)
+						continue
+					}
 					if resetErr := runner.ClusterResetHard(ctx, endpoint); resetErr != nil {
 						logger.Error(resetErr, "Failed to cluster reset node; will skip add-node", "endpoint", endpoint)
 						continue

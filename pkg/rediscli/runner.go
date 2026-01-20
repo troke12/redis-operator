@@ -288,6 +288,17 @@ func (r *Runner) ClusterResetHard(ctx context.Context, endpoint string) error {
 	return err
 }
 
+// FlushAll wipes all databases on the node
+func (r *Runner) FlushAll(ctx context.Context, endpoint string) error {
+	host, port := r.splitEndpoint(endpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" flushall", host, port),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
 // splitEndpoint splits endpoint "host:port" into host and port
 func (r *Runner) splitEndpoint(endpoint string) (string, string) {
 	parts := strings.Split(endpoint, ":")
