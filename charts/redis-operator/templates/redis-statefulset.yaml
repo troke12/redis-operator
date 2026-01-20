@@ -52,7 +52,6 @@ spec:
                   name: {{ .Values.redisCluster.passwordSecretName }}
                   key: {{ .Values.redisCluster.passwordSecretKey }}
                   optional: false
-          args: ["/data/redis.conf"]
           readinessProbe:
             exec:
               command:
