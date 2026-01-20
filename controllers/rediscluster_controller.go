@@ -139,12 +139,27 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		clusterState = clusterInfo["cluster_state"]
 	}
 
+	// If cluster info is unavailable, try to detect whether the cluster already exists
+	// to avoid endlessly retrying `--cluster create` on nodes that are already initialized.
+	existingCluster := false
+	if clusterInfo == nil {
+		if nodes, nodesErr := runner.ClusterNodes(ctx, firstEndpoint); nodesErr == nil && len(nodes) > 0 {
+			existingCluster = true
+		}
+	}
+
 	// Bootstrap cluster if needed
-	if clusterState == "" || clusterState == "fail" {
+	if (clusterState == "" || clusterState == "fail") && !existingCluster {
 		if readyCount >= redisCluster.Spec.MinReady {
 			logger.Info("Bootstrapping Redis cluster", "endpoints", readyEndpoints)
 			if err := runner.ClusterCreate(ctx, readyEndpoints); err != nil {
-				return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("failed to create cluster: %v", err))
+				// Redis refuses create if nodes already have cluster metadata or data.
+				// Treat that as "already initialized" to prevent a tight job loop.
+				if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
+					logger.Info("Cluster create refused because node is not empty; assuming existing cluster and skipping bootstrap", "error", err)
+				} else {
+					return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("failed to create cluster: %v", err))
+				}
 			}
 			// Re-check cluster state
 			time.Sleep(2 * time.Second)
