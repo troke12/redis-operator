@@ -135,9 +135,11 @@ func (r *Runner) getJobLogs(ctx context.Context, jobName string) (string, error)
 
 // ClusterInfo runs CLUSTER INFO and parses the state
 func (r *Runner) ClusterInfo(ctx context.Context, endpoint string) (map[string]string, error) {
+	// Endpoint format: host:port, split for redis-cli
+	host, port := r.splitEndpoint(endpoint)
 	cmd := []string{
 		"sh", "-c",
-		fmt.Sprintf("redis-cli -h %s -p 6379 -a \"$REDISCLI_AUTH\" cluster info", endpoint),
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster info", host, port),
 	}
 
 	output, err := r.Execute(ctx, cmd)
@@ -158,9 +160,11 @@ func (r *Runner) ClusterInfo(ctx context.Context, endpoint string) (map[string]s
 
 // ClusterNodes runs CLUSTER NODES and returns parsed node info
 func (r *Runner) ClusterNodes(ctx context.Context, endpoint string) ([]NodeInfo, error) {
+	// Endpoint format: host:port, split for redis-cli
+	host, port := r.splitEndpoint(endpoint)
 	cmd := []string{
 		"sh", "-c",
-		fmt.Sprintf("redis-cli -h %s -p 6379 -a \"$REDISCLI_AUTH\" cluster nodes", endpoint),
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster nodes", host, port),
 	}
 
 	output, err := r.Execute(ctx, cmd)
@@ -239,9 +243,11 @@ func (r *Runner) ClusterDelNode(ctx context.Context, endpoint, nodeID string) er
 
 // ClusterForget removes a node from other nodes' view
 func (r *Runner) ClusterForget(ctx context.Context, endpoint, nodeID string) error {
+	// Endpoint format: host:port, split for redis-cli
+	host, port := r.splitEndpoint(endpoint)
 	cmd := []string{
 		"sh", "-c",
-		fmt.Sprintf("redis-cli -h %s -p 6379 -a \"$REDISCLI_AUTH\" cluster forget %s", endpoint, nodeID),
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster forget %s", host, port, nodeID),
 	}
 
 	_, err := r.Execute(ctx, cmd)
@@ -261,6 +267,16 @@ func (r *Runner) ClusterRebalance(ctx context.Context, endpoint string, useEmpty
 
 	_, err := r.Execute(ctx, cmd)
 	return err
+}
+
+// splitEndpoint splits endpoint "host:port" into host and port
+func (r *Runner) splitEndpoint(endpoint string) (string, string) {
+	parts := strings.Split(endpoint, ":")
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	// Fallback: assume default port if no port specified
+	return endpoint, "6379"
 }
 
 // NodeInfo represents a Redis cluster node

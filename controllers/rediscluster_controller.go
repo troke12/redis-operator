@@ -109,7 +109,8 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	for _, pod := range pods.Items {
 		if isPodReady(&pod) {
 			readyPods = append(readyPods, pod)
-			endpoint := buildEndpoint(pod.Name, redisCluster.Spec.ServiceName, targetNs)
+			// Redis 6.2 cluster meet expects IP:port (hostnames may be rejected)
+			endpoint := buildEndpoint(pod.Status.PodIP)
 			readyEndpoints = append(readyEndpoints, endpoint)
 		}
 	}
@@ -266,8 +267,8 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-func buildEndpoint(podName, serviceName, namespace string) string {
-	return fmt.Sprintf("%s.%s.%s.svc.cluster.local:6379", podName, serviceName, namespace)
+func buildEndpoint(podIP string) string {
+	return fmt.Sprintf("%s:6379", podIP)
 }
 
 // SetupWithManager sets up the controller with the Manager.
