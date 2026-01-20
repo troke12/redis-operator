@@ -23,7 +23,7 @@ rules:
     resources: ["leases"]
     verbs: ["get","list","watch","create","update","patch","delete"]
   - apiGroups: [""]
-    resources: ["pods","secrets","events"]
+    resources: ["pods","pods/log","secrets","events"]
     verbs: ["get","list","watch","create","update","patch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
