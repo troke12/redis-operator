@@ -544,3 +544,156 @@ func (r *Runner) WaitForClusterConverge(ctx context.Context, endpoints []string,
 	}
 	return fmt.Errorf("cluster did not converge within %v", maxWait)
 }
+
+// CheckNodeNeedsReset checks if a node has stale cluster data or keys that need to be cleared
+func (r *Runner) CheckNodeNeedsReset(ctx context.Context, endpoint string) (bool, error) {
+	host, port := r.splitEndpoint(endpoint)
+
+	// Check if node knows other cluster nodes
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster nodes", host, port),
+	}
+	output, err := r.Execute(ctx, cmd)
+	if err != nil {
+		return false, err
+	}
+
+	// Parse cluster nodes output - if there's more than just the node itself, it knows others
+	nodeCount := 0
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		if strings.Contains(line, ":") {
+			nodeCount++
+		}
+	}
+
+	if nodeCount > 1 {
+		return true, nil // Knows other nodes
+	}
+
+	// Check if node has any keys in database 0
+	cmd = []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" dbsize", host, port),
+	}
+	output, err = r.Execute(ctx, cmd)
+	if err != nil {
+		return false, err
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		// Output format: "# Keyspace" or "db0:keys=N,expires=M"
+		if strings.Contains(line, "keys=") {
+			// Has keys
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// FlushAllAsync flushes all data asynchronously (faster for large datasets)
+func (r *Runner) FlushAllAsync(ctx context.Context, endpoint string) error {
+	host, port := r.splitEndpoint(endpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" flushall async", host, port),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
+// ClusterResetSoft performs a soft cluster reset (preserves data, clears cluster state)
+func (r *Runner) ClusterResetSoft(ctx context.Context, endpoint string) error {
+	host, port := r.splitEndpoint(endpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster reset soft", host, port),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
+// NodeClusterState represents the cluster-related state of a node
+type NodeClusterState struct {
+	HasClusterInfo bool
+	KnownNodeCount int
+	KnownNodeIDs   []string
+	HasKeys        bool
+	KeyCount       int64
+	ClusterEnabled bool
+}
+
+// GetNodeClusterState gets detailed cluster state information from a node
+func (r *Runner) GetNodeClusterState(ctx context.Context, endpoint string) (*NodeClusterState, error) {
+	host, port := r.splitEndpoint(endpoint)
+	state := &NodeClusterState{}
+
+	// Check cluster nodes
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster nodes", host, port),
+	}
+	output, err := r.Execute(ctx, cmd)
+	if err != nil {
+		// If cluster is not enabled, this will fail
+		if strings.Contains(err.Error(), "cluster") {
+			state.ClusterEnabled = false
+			return state, nil
+		}
+		return nil, err
+	}
+
+	state.ClusterEnabled = true
+
+	// Parse cluster nodes
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) >= 2 && strings.Contains(parts[1], ":") {
+			state.KnownNodeCount++
+			state.KnownNodeIDs = append(state.KnownNodeIDs, parts[0])
+		}
+	}
+
+	state.HasClusterInfo = state.KnownNodeCount > 0
+
+	// Check for keys using DBSIZE
+	cmd = []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" dbsize", host, port),
+	}
+	output, err = r.Execute(ctx, cmd)
+	if err == nil {
+		for _, line := range strings.Split(output, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "Warning:") {
+				continue
+			}
+			// Format: "# Keyspace" header or actual dbsize response
+			if strings.HasPrefix(line, "db") || strings.Contains(line, "keys") {
+				state.HasKeys = true
+				// Try to parse key count from "db0:keys=N,expires=M" format
+				if strings.Contains(line, "keys=") {
+					parts := strings.Split(line, "keys=")
+					if len(parts) > 1 {
+						fmt.Sscanf(parts[1], "%d", &state.KeyCount)
+					}
+				}
+			}
+		}
+	}
+
+	return state, nil
+}

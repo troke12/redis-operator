@@ -218,31 +218,75 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	for _, endpoint := range readyEndpoints {
 		if _, exists := endpointToNodeID[endpoint]; !exists {
 			logger.Info("Adding node to cluster", "endpoint", endpoint)
-			if err := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); err != nil {
-				// If the node is already initialized/non-empty, skip to avoid tight loop
-				if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
-					logger.Info("Add-node refused: node not empty; trying flushall + cluster reset", "endpoint", endpoint, "error", err)
-					if flushErr := runner.FlushAll(ctx, endpoint); flushErr != nil {
-						logger.Error(flushErr, "Failed to flushall before reset; will skip add-node", "endpoint", endpoint)
-						continue
+
+			// Check the node's current state
+			nodeState, _ := runner.GetNodeClusterState(ctx, endpoint)
+
+			if nodeState != nil {
+				logger.Info("Node state before adding",
+					"endpoint", endpoint,
+					"hasClusterInfo", nodeState.HasClusterInfo,
+					"knownNodes", nodeState.KnownNodeCount,
+					"hasKeys", nodeState.HasKeys)
+
+				// If node knows other nodes from a DIFFERENT cluster, we need to reset cluster state only
+				// But NEVER flush data - preserve all keys
+				if nodeState.HasClusterInfo && nodeState.KnownNodeCount > 1 {
+					// Check if it knows nodes from our current cluster
+					isFromOurCluster := false
+					for _, knownID := range nodeState.KnownNodeIDs {
+						if _, exists := nodeIDToEndpoint[knownID]; exists {
+							isFromOurCluster = true
+							break
+						}
 					}
-					if resetErr := runner.ClusterResetHard(ctx, endpoint); resetErr != nil {
-						logger.Error(resetErr, "Failed to cluster reset node; will skip add-node", "endpoint", endpoint)
-						continue
+
+					if !isFromOurCluster {
+						logger.Info("Node has stale cluster info from different cluster, resetting cluster state only (preserving data)", "endpoint", endpoint)
+						if err := runner.ClusterResetSoft(ctx, endpoint); err != nil {
+							logger.Error(err, "Failed to soft reset node cluster state", "endpoint", endpoint)
+							// Try hard reset as fallback but still no flush
+							if err := runner.ClusterResetHard(ctx, endpoint); err != nil {
+								logger.Error(err, "Failed to hard reset node cluster state", "endpoint", endpoint)
+							}
+						}
+						time.Sleep(2 * time.Second)
 					}
-					if retryErr := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); retryErr != nil {
-						logger.Error(retryErr, "Retry add-node failed after reset", "endpoint", endpoint)
-						continue
-					}
-					logger.Info("Add-node succeeded after reset", "endpoint", endpoint)
-				} else {
-					logger.Error(err, "Failed to add node", "endpoint", endpoint)
-					continue
 				}
 			}
+
+			// Try to add the node - use cluster meet which is more permissive than add-node
+			// cluster meet doesn't check if node is empty, it just initiates handshake
+			newHost, newPort := extractHostPort(endpoint)
+			if err := runner.ClusterMeet(ctx, firstEndpoint, newHost, newPort); err != nil {
+				logger.Error(err, "Cluster meet failed", "endpoint", endpoint)
+
+				// Fallback to add-node
+				if addErr := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); addErr != nil {
+					if strings.Contains(addErr.Error(), "is not empty") || strings.Contains(addErr.Error(), "already knows other nodes") {
+						// Only reset cluster state, NOT data
+						logger.Info("Add-node refused, resetting cluster state only (preserving data)", "endpoint", endpoint)
+						_ = runner.ClusterResetHard(ctx, endpoint)
+						time.Sleep(2 * time.Second)
+
+						// Try meet again
+						if meetErr := runner.ClusterMeet(ctx, firstEndpoint, newHost, newPort); meetErr != nil {
+							logger.Error(meetErr, "Cluster meet failed after reset", "endpoint", endpoint)
+							continue
+						}
+					} else {
+						logger.Error(addErr, "Failed to add node", "endpoint", endpoint)
+						continue
+					}
+				}
+			}
+
 			nodesAdded = true
 			newEndpoints = append(newEndpoints, endpoint)
 			logger.Info("Successfully added node to cluster", "endpoint", endpoint)
+
+			// Small delay between adding nodes to let cluster stabilize
+			time.Sleep(1 * time.Second)
 		}
 	}
 
@@ -380,6 +424,35 @@ func extractIP(endpoint string) string {
 		return endpoint[:idx]
 	}
 	return endpoint
+}
+
+// extractHostPort extracts host and port from endpoint string
+func extractHostPort(endpoint string) (string, int) {
+	parts := strings.Split(endpoint, ":")
+	if len(parts) == 2 {
+		port := 6379
+		fmt.Sscanf(parts[1], "%d", &port)
+		return parts[0], port
+	}
+	return endpoint, 6379
+}
+
+// resetClusterStateOnly resets only the cluster state of a node, preserving all data
+func (r *RedisClusterReconciler) resetClusterStateOnly(ctx context.Context, logger logr.Logger, runner *rediscli.Runner, endpoint string) error {
+	// Try soft reset first (less disruptive)
+	logger.Info("Performing cluster reset soft (preserving data)", "endpoint", endpoint)
+	if err := runner.ClusterResetSoft(ctx, endpoint); err != nil {
+		logger.Info("Soft reset failed, trying hard reset", "endpoint", endpoint, "error", err)
+		// Hard reset as fallback - still preserves data, just more aggressive cluster state clear
+		if err := runner.ClusterResetHard(ctx, endpoint); err != nil {
+			return fmt.Errorf("cluster reset failed: %w", err)
+		}
+	}
+
+	// Wait for reset to complete
+	time.Sleep(1 * time.Second)
+
+	return nil
 }
 
 // handleScaleDown safely removes nodes from the cluster, migrating slots first
