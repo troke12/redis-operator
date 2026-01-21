@@ -64,18 +64,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get clientset for log retrieval
-	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
+	// Get rest config and clientset for pod exec
+	restConfig := mgr.GetConfig()
+	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		setupLog.Error(err, "unable to create clientset")
 		os.Exit(1)
 	}
 
 	if err = (&controllers.RedisClusterReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-		Log:       ctrl.Log.WithName("controllers").WithName("RedisCluster"),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Clientset:  clientset,
+		RestConfig: restConfig,
+		Log:        ctrl.Log.WithName("controllers").WithName("RedisCluster"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RedisCluster")
 		os.Exit(1)
