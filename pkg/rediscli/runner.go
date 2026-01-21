@@ -436,8 +436,111 @@ func (r *Runner) ClusterCheck(ctx context.Context, endpoint string) (string, err
 func (r *Runner) ClusterFix(ctx context.Context, endpoint string) error {
 	cmd := []string{
 		"sh", "-c",
-		fmt.Sprintf("redis-cli --cluster fix %s -a \"$REDISCLI_AUTH\"", endpoint),
+		fmt.Sprintf("redis-cli --cluster fix %s --cluster-yes -a \"$REDISCLI_AUTH\"", endpoint),
 	}
 	_, err := r.Execute(ctx, cmd)
 	return err
+}
+
+// ClusterCheckHealth checks cluster health and returns any issues found
+func (r *Runner) ClusterCheckHealth(ctx context.Context, endpoint string) (*ClusterHealth, error) {
+	output, err := r.ClusterCheck(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	health := &ClusterHealth{
+		IsHealthy:     true,
+		HasOpenSlots:  false,
+		NodesAgree:    true,
+		AllSlotsCover: true,
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Nodes don't agree about configuration") {
+			health.IsHealthy = false
+			health.NodesAgree = false
+		}
+		if strings.Contains(line, "slots in importing state") ||
+			strings.Contains(line, "slots in migrating state") ||
+			strings.Contains(line, "open slots") {
+			health.IsHealthy = false
+			health.HasOpenSlots = true
+		}
+		if strings.Contains(line, "[ERR]") {
+			health.IsHealthy = false
+			health.Errors = append(health.Errors, line)
+		}
+		if strings.Contains(line, "[WARNING]") {
+			health.Warnings = append(health.Warnings, line)
+		}
+	}
+
+	return health, nil
+}
+
+// ClusterHealth represents the health state of the cluster
+type ClusterHealth struct {
+	IsHealthy     bool
+	HasOpenSlots  bool
+	NodesAgree    bool
+	AllSlotsCover bool
+	Errors        []string
+	Warnings      []string
+}
+
+// ClusterMeet forces a node to join the cluster (lower-level than add-node)
+func (r *Runner) ClusterMeet(ctx context.Context, targetEndpoint, newHost string, newPort int) error {
+	host, port := r.splitEndpoint(targetEndpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster meet %s %d", host, port, newHost, newPort),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
+// ClusterSetSlot sets a slot to a specific state (importing, migrating, stable, node)
+func (r *Runner) ClusterSetSlot(ctx context.Context, endpoint string, slot int, state string, nodeID string) error {
+	host, port := r.splitEndpoint(endpoint)
+	var cmd []string
+	if state == "node" || state == "importing" || state == "migrating" {
+		cmd = []string{
+			"sh", "-c",
+			fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster setslot %d %s %s", host, port, slot, state, nodeID),
+		}
+	} else {
+		// stable doesn't need nodeID
+		cmd = []string{
+			"sh", "-c",
+			fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster setslot %d %s", host, port, slot, state),
+		}
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
+// WaitForClusterConverge waits for all nodes to agree on cluster configuration
+func (r *Runner) WaitForClusterConverge(ctx context.Context, endpoints []string, maxWait time.Duration) error {
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
+		allAgree := true
+		for _, endpoint := range endpoints {
+			health, err := r.ClusterCheckHealth(ctx, endpoint)
+			if err != nil {
+				allAgree = false
+				break
+			}
+			if !health.NodesAgree || health.HasOpenSlots {
+				allAgree = false
+				break
+			}
+		}
+		if allAgree {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("cluster did not converge within %v", maxWait)
 }
