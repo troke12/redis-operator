@@ -193,8 +193,28 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		nodeIDToEndpoint[node.ID] = node.Addr
 	}
 
+	// Check cluster health before any operations
+	health, healthErr := runner.ClusterCheckHealth(ctx, firstEndpoint)
+	if healthErr != nil {
+		logger.Info("Failed to check cluster health", "error", healthErr)
+	} else if !health.IsHealthy {
+		logger.Info("Cluster has issues, attempting to fix before operations",
+			"nodesAgree", health.NodesAgree,
+			"hasOpenSlots", health.HasOpenSlots,
+			"warnings", health.Warnings)
+
+		// Try to fix the cluster first
+		if fixErr := runner.ClusterFix(ctx, firstEndpoint); fixErr != nil {
+			logger.Error(fixErr, "Failed to fix cluster issues")
+		} else {
+			logger.Info("Cluster fix completed, waiting for convergence")
+			time.Sleep(3 * time.Second)
+		}
+	}
+
 	// Handle scale up: add missing nodes
 	nodesAdded := false
+	var newEndpoints []string
 	for _, endpoint := range readyEndpoints {
 		if _, exists := endpointToNodeID[endpoint]; !exists {
 			logger.Info("Adding node to cluster", "endpoint", endpoint)
@@ -221,16 +241,68 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				}
 			}
 			nodesAdded = true
+			newEndpoints = append(newEndpoints, endpoint)
 			logger.Info("Successfully added node to cluster", "endpoint", endpoint)
 		}
 	}
 
-	// Rebalance after all nodes are added (if any were added and auto-rebalance enabled)
-	if nodesAdded && redisCluster.Spec.AutoRebalance {
-		logger.Info("Rebalancing cluster after scale-up")
-		time.Sleep(2 * time.Second)
-		if err := runner.ClusterRebalance(ctx, firstEndpoint, true); err != nil {
-			logger.Error(err, "Failed to rebalance cluster after scale-up")
+	// If nodes were added, wait for cluster to converge before rebalancing
+	if nodesAdded {
+		logger.Info("Waiting for cluster to recognize new nodes", "newNodes", len(newEndpoints))
+
+		// Wait for cluster to propagate node information
+		time.Sleep(5 * time.Second)
+
+		// Re-check cluster health before rebalance
+		health, healthErr = runner.ClusterCheckHealth(ctx, firstEndpoint)
+		if healthErr != nil {
+			logger.Info("Failed to check cluster health after adding nodes", "error", healthErr)
+		} else if !health.IsHealthy {
+			logger.Info("Cluster not healthy after adding nodes, fixing before rebalance",
+				"nodesAgree", health.NodesAgree,
+				"hasOpenSlots", health.HasOpenSlots)
+
+			if fixErr := runner.ClusterFix(ctx, firstEndpoint); fixErr != nil {
+				logger.Error(fixErr, "Failed to fix cluster after adding nodes")
+			}
+			time.Sleep(3 * time.Second)
+		}
+
+		// Rebalance if auto-rebalance is enabled
+		if redisCluster.Spec.AutoRebalance {
+			logger.Info("Rebalancing cluster after scale-up")
+
+			// Check health again before rebalance
+			health, _ = runner.ClusterCheckHealth(ctx, firstEndpoint)
+			if health != nil && !health.IsHealthy {
+				logger.Info("Cluster still not healthy, attempting fix before rebalance")
+				_ = runner.ClusterFix(ctx, firstEndpoint)
+				time.Sleep(2 * time.Second)
+			}
+
+			if err := runner.ClusterRebalance(ctx, firstEndpoint, true); err != nil {
+				// If rebalance fails, try to fix and retry once
+				if strings.Contains(err.Error(), "fix your cluster") ||
+					strings.Contains(err.Error(), "open slots") ||
+					strings.Contains(err.Error(), "don't agree") {
+					logger.Info("Rebalance failed due to cluster issues, attempting fix and retry")
+					if fixErr := runner.ClusterFix(ctx, firstEndpoint); fixErr != nil {
+						logger.Error(fixErr, "Failed to fix cluster before rebalance retry")
+					} else {
+						time.Sleep(3 * time.Second)
+						// Retry rebalance
+						if retryErr := runner.ClusterRebalance(ctx, firstEndpoint, true); retryErr != nil {
+							logger.Error(retryErr, "Rebalance retry also failed")
+						} else {
+							logger.Info("Rebalance succeeded after fix")
+						}
+					}
+				} else {
+					logger.Error(err, "Failed to rebalance cluster after scale-up")
+				}
+			} else {
+				logger.Info("Cluster rebalance completed successfully")
+			}
 		}
 	}
 
@@ -439,13 +511,43 @@ func (r *RedisClusterReconciler) handleScaleDown(
 		}
 	}
 
-	// Step 4: Rebalance if enabled to redistribute slots evenly
+	// Step 4: Check cluster health and fix if needed
+	time.Sleep(2 * time.Second)
+	health, healthErr := runner.ClusterCheckHealth(ctx, clusterEndpoint)
+	if healthErr == nil && !health.IsHealthy {
+		logger.Info("Cluster has issues after scale-down, attempting fix",
+			"hasOpenSlots", health.HasOpenSlots,
+			"nodesAgree", health.NodesAgree)
+		if fixErr := runner.ClusterFix(ctx, clusterEndpoint); fixErr != nil {
+			logger.Error(fixErr, "Failed to fix cluster after scale-down")
+		} else {
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	// Step 5: Rebalance if enabled to redistribute slots evenly
 	if autoRebalance && len(remainingMasters) > 0 {
 		logger.Info("Rebalancing cluster after scale-down")
-		time.Sleep(2 * time.Second)
+
+		// Check health before rebalance
+		health, _ = runner.ClusterCheckHealth(ctx, clusterEndpoint)
+		if health != nil && !health.IsHealthy {
+			logger.Info("Cluster not healthy, fixing before rebalance")
+			_ = runner.ClusterFix(ctx, clusterEndpoint)
+			time.Sleep(2 * time.Second)
+		}
+
 		if err := runner.ClusterRebalance(ctx, clusterEndpoint, false); err != nil {
-			logger.Error(err, "Failed to rebalance after scale-down")
-			// Non-fatal error, continue
+			if strings.Contains(err.Error(), "fix your cluster") {
+				logger.Info("Rebalance failed, attempting fix and retry")
+				_ = runner.ClusterFix(ctx, clusterEndpoint)
+				time.Sleep(2 * time.Second)
+				if retryErr := runner.ClusterRebalance(ctx, clusterEndpoint, false); retryErr != nil {
+					logger.Error(retryErr, "Rebalance retry failed after scale-down")
+				}
+			} else {
+				logger.Error(err, "Failed to rebalance after scale-down")
+			}
 		}
 	}
 
