@@ -19,8 +19,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,26 +40,16 @@ jobs:
           cp -r docs/* _site/
 
           # Download existing index.yaml and chart packages from GitHub Pages to preserve them
-          # Use custom domain troke.id instead of troke12.github.io
           echo "Downloading existing Helm repository data..."
           curl -sL http://troke.id/redis-operator/index.yaml -o _site/index.yaml 2>/dev/null || touch _site/index.yaml
 
           # Download existing chart packages
           if [[ -s _site/index.yaml ]]; then
             echo "Downloading existing chart packages..."
-            # Extract version numbers and download from custom domain
             grep -oP 'redis-operator-[0-9]+\.[0-9]+\.[0-9]+\.tgz' _site/index.yaml | sort -u | while read filename; do
               echo "Downloading $filename..."
               curl -sL "http://troke.id/redis-operator/$filename" -o "_site/$filename" || echo "Failed to download $filename"
             done
-
-            # Recreate the latest symlink
-            LATEST_TGZ="$(ls -1t _site/redis-operator-*.tgz 2>/dev/null | head -n 1)"
-            if [[ -n "${LATEST_TGZ}" ]]; then
-              CHART_BASENAME="$(basename "${LATEST_TGZ}")"
-              ln -sf "${CHART_BASENAME}" _site/redis-operator-latest.tgz || true
-              echo "Created latest link: redis-operator-latest.tgz -> ${CHART_BASENAME}"
-            fi
           fi
 
           echo "=== Site contents ==="
@@ -67,13 +60,6 @@ jobs:
         with:
           path: _site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
