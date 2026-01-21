@@ -54,8 +54,13 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Set defaults
+	// MinReady defaults to Replicas if set, otherwise 3
 	if redisCluster.Spec.MinReady == 0 {
-		redisCluster.Spec.MinReady = 3
+		if redisCluster.Spec.Replicas > 0 {
+			redisCluster.Spec.MinReady = redisCluster.Spec.Replicas
+		} else {
+			redisCluster.Spec.MinReady = 3
+		}
 	}
 	if redisCluster.Spec.ServiceName == "" {
 		redisCluster.Spec.ServiceName = "redis-headless"
@@ -121,7 +126,7 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.bootstrapCluster(ctx, logger, runner, redisCluster, readyEndpoints)
 	}
 
-	// CASE 2: Cluster exists but is in fail state with no slots
+	// CASE 2: Cluster exists but is in fail state with no slots - needs re-bootstrap
 	if clusterState == "fail" {
 		slotsAssigned := 0
 		if clusterInfo != nil {
@@ -129,18 +134,23 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 
 		if slotsAssigned == 0 {
-			logger.Info("Cluster in fail state with no slots, attempting to fix or re-bootstrap")
-			// Try to fix first
-			if err := runner.ClusterFix(ctx, firstEndpoint); err != nil {
-				logger.Info("Fix failed, will try to continue", "error", err)
-			}
-			time.Sleep(2 * time.Second)
+			logger.Info("Cluster in fail state with no slots assigned, re-bootstrapping")
+			// This happens when --cluster create was interrupted or failed
+			// We need to reset and re-create the cluster
+			return r.bootstrapCluster(ctx, logger, runner, redisCluster, readyEndpoints)
+		}
 
-			// Re-check
-			clusterInfo, _ = runner.ClusterInfo(ctx, firstEndpoint)
-			if clusterInfo != nil {
-				clusterState = clusterInfo["cluster_state"]
-			}
+		// If we have slots but cluster is in fail state, try to fix
+		logger.Info("Cluster in fail state but has slots, attempting fix")
+		if err := runner.ClusterFix(ctx, firstEndpoint); err != nil {
+			logger.Info("Fix failed, will try to continue", "error", err)
+		}
+		time.Sleep(2 * time.Second)
+
+		// Re-check
+		clusterInfo, _ = runner.ClusterInfo(ctx, firstEndpoint)
+		if clusterInfo != nil {
+			clusterState = clusterInfo["cluster_state"]
 		}
 	}
 
