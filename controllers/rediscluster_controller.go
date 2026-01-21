@@ -370,24 +370,35 @@ func (r *RedisClusterReconciler) scaleDown(
 	clusterEndpoint string,
 	autoRebalance bool,
 ) error {
-	// Separate masters and replicas
+	// Separate masters and replicas, and track failed nodes
 	var mastersToRemove, replicasToRemove []rediscli.NodeInfo
+	var failedMasters []rediscli.NodeInfo
 	removeNodeIDs := make(map[string]bool)
 
 	for _, node := range nodesToRemove {
 		removeNodeIDs[node.ID] = true
+		isFailed := strings.Contains(node.Flags, "fail")
+
 		if node.Role == "master" {
-			mastersToRemove = append(mastersToRemove, node)
+			if isFailed {
+				failedMasters = append(failedMasters, node)
+			} else {
+				mastersToRemove = append(mastersToRemove, node)
+			}
 		} else {
 			replicasToRemove = append(replicasToRemove, node)
 		}
 	}
 
-	// Find remaining masters
+	// Find remaining masters (healthy ones)
 	var remainingMasters []rediscli.NodeInfo
+	var remainingEndpoints []string
 	for _, node := range allNodes {
-		if node.Role == "master" && !removeNodeIDs[node.ID] {
-			remainingMasters = append(remainingMasters, node)
+		if !removeNodeIDs[node.ID] && !strings.Contains(node.Flags, "fail") {
+			if node.Role == "master" {
+				remainingMasters = append(remainingMasters, node)
+			}
+			remainingEndpoints = append(remainingEndpoints, node.Addr)
 		}
 	}
 
@@ -396,7 +407,36 @@ func (r *RedisClusterReconciler) scaleDown(
 		return remainingMasters[i].SlotCount() < remainingMasters[j].SlotCount()
 	})
 
-	// Migrate slots from masters being removed
+	// Handle failed masters - they need special treatment
+	// We can't migrate slots from them, so we need to fix the cluster and forget them
+	if len(failedMasters) > 0 {
+		logger.Info("Handling failed masters", "count", len(failedMasters))
+
+		// First, run cluster fix to recover orphaned slots
+		if err := runner.ClusterFix(ctx, clusterEndpoint); err != nil {
+			logger.Info("Cluster fix attempt", "error", err)
+		}
+		time.Sleep(2 * time.Second)
+
+		// Forget failed nodes from all remaining nodes
+		for _, failedNode := range failedMasters {
+			logger.Info("Forgetting failed master", "nodeID", failedNode.ID, "addr", failedNode.Addr)
+			for _, endpoint := range remainingEndpoints {
+				if err := runner.ClusterForget(ctx, endpoint, failedNode.ID); err != nil {
+					// It's ok if some forgets fail
+					logger.V(1).Info("Forget failed (may be ok)", "endpoint", endpoint, "nodeID", failedNode.ID, "error", err)
+				}
+			}
+		}
+
+		// Run fix again to reassign orphaned slots
+		time.Sleep(2 * time.Second)
+		if err := runner.ClusterFix(ctx, clusterEndpoint); err != nil {
+			logger.Info("Cluster fix after forget", "error", err)
+		}
+	}
+
+	// Migrate slots from healthy masters being removed
 	for _, master := range mastersToRemove {
 		if master.HasSlots() && len(remainingMasters) > 0 {
 			slotCount := master.SlotCount()
@@ -420,7 +460,7 @@ func (r *RedisClusterReconciler) scaleDown(
 		}
 	}
 
-	// Remove masters
+	// Remove healthy masters
 	for _, master := range mastersToRemove {
 		logger.Info("Removing master", "nodeID", master.ID)
 		if err := runner.ClusterDelNode(ctx, clusterEndpoint, master.ID); err != nil {
