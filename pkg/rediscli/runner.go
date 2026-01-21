@@ -194,6 +194,11 @@ func (r *Runner) ClusterNodes(ctx context.Context, endpoint string) ([]NodeInfo,
 		if !strings.Contains(addr, ":") {
 			continue
 		}
+
+		// Redis cluster nodes output format: host:port@cport
+		// Extract just host:port for consistency
+		addr = normalizeClusterAddr(addr)
+
 		flags := ""
 		if len(parts) > 2 {
 			flags = parts[2]
@@ -204,15 +209,31 @@ func (r *Runner) ClusterNodes(ctx context.Context, endpoint string) ([]NodeInfo,
 			role = "master"
 		}
 
+		// Parse slot ranges if present (parts[8:] for masters)
+		var slots []string
+		if role == "master" && len(parts) > 8 {
+			slots = parts[8:]
+		}
+
 		nodes = append(nodes, NodeInfo{
 			ID:    nodeID,
 			Addr:  addr,
 			Role:  role,
 			Flags: flags,
+			Slots: slots,
 		})
 	}
 
 	return nodes, nil
+}
+
+// normalizeClusterAddr extracts host:port from cluster node address format (host:port@cport)
+func normalizeClusterAddr(addr string) string {
+	// Remove @cport suffix if present (e.g., "10.0.0.1:6379@16379" -> "10.0.0.1:6379")
+	if idx := strings.Index(addr, "@"); idx != -1 {
+		return addr[:idx]
+	}
+	return addr
 }
 
 // ClusterCreate creates a new Redis cluster
@@ -315,4 +336,108 @@ type NodeInfo struct {
 	Addr  string
 	Role  string
 	Flags string
+	Slots []string // Slot ranges assigned to this node (masters only)
+}
+
+// HasSlots returns true if the node has any slots assigned
+func (n *NodeInfo) HasSlots() bool {
+	return len(n.Slots) > 0
+}
+
+// SlotCount returns the approximate number of slots assigned to this node
+func (n *NodeInfo) SlotCount() int {
+	count := 0
+	for _, slot := range n.Slots {
+		if strings.Contains(slot, "-") {
+			// Range like "0-5460"
+			parts := strings.Split(slot, "-")
+			if len(parts) == 2 {
+				var start, end int
+				fmt.Sscanf(parts[0], "%d", &start)
+				fmt.Sscanf(parts[1], "%d", &end)
+				count += end - start + 1
+			}
+		} else {
+			// Single slot
+			count++
+		}
+	}
+	return count
+}
+
+// ClusterReshard moves slots from one node to another
+// This is used to safely migrate data before removing a master node
+func (r *Runner) ClusterReshard(ctx context.Context, clusterEndpoint, fromNodeID, toNodeID string, slotCount int) error {
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli --cluster reshard %s --cluster-from %s --cluster-to %s --cluster-slots %d --cluster-yes -a \"$REDISCLI_AUTH\"",
+			clusterEndpoint, fromNodeID, toNodeID, slotCount),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
+// ClusterFailover triggers a manual failover on a replica node
+func (r *Runner) ClusterFailover(ctx context.Context, endpoint string) error {
+	host, port := r.splitEndpoint(endpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster failover", host, port),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
+// ClusterReplicate makes a node replicate another master
+func (r *Runner) ClusterReplicate(ctx context.Context, endpoint, masterNodeID string) error {
+	host, port := r.splitEndpoint(endpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster replicate %s", host, port, masterNodeID),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
+
+// ClusterCountKeysInSlot returns the number of keys in the given slot
+func (r *Runner) ClusterCountKeysInSlot(ctx context.Context, endpoint string, slot int) (int, error) {
+	host, port := r.splitEndpoint(endpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster countkeysinslot %d", host, port, slot),
+	}
+	output, err := r.Execute(ctx, cmd)
+	if err != nil {
+		return 0, err
+	}
+
+	var count int
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		fmt.Sscanf(line, "%d", &count)
+		break
+	}
+	return count, nil
+}
+
+// ClusterCheck runs cluster check to verify cluster health
+func (r *Runner) ClusterCheck(ctx context.Context, endpoint string) (string, error) {
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli --cluster check %s -a \"$REDISCLI_AUTH\"", endpoint),
+	}
+	return r.Execute(ctx, cmd)
+}
+
+// ClusterFix attempts to fix cluster slot inconsistencies
+func (r *Runner) ClusterFix(ctx context.Context, endpoint string) error {
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli --cluster fix %s -a \"$REDISCLI_AUTH\"", endpoint),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
 }

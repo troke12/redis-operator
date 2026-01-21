@@ -14,6 +14,7 @@ spec:
       labels:
         app: redis
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
         - name: redis
           image: redis:6.2-alpine
@@ -36,12 +37,38 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: redis-auth
                   key: REDIS_PASSWORD
           command: ["/bin/sh", "/entrypoint.sh"]
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Save data before shutdown
+                    LAST_SAVE=$(redis-cli -a "${REDIS_PASSWORD}" LASTSAVE 2>/dev/null)
+                    redis-cli -a "${REDIS_PASSWORD}" BGSAVE 2>/dev/null || true
+                    # Wait for save to complete (max 30 seconds)
+                    TIMEOUT=30
+                    while [ $TIMEOUT -gt 0 ]; do
+                      NEW_SAVE=$(redis-cli -a "${REDIS_PASSWORD}" LASTSAVE 2>/dev/null)
+                      if [ "$NEW_SAVE" != "$LAST_SAVE" ]; then
+                        break
+                      fi
+                      sleep 1
+                      TIMEOUT=$((TIMEOUT - 1))
+                    done
+                    # Small delay to ensure operator can detect shutdown
+                    sleep 5
           readinessProbe:
             exec:
               command:
