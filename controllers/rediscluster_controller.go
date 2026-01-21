@@ -140,35 +140,65 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		clusterState = clusterInfo["cluster_state"]
 	}
 
-	// If cluster info is unavailable, try to detect whether the cluster already exists
-	// to avoid endlessly retrying `--cluster create` on nodes that are already initialized.
+	// Check if cluster already exists by trying to get cluster nodes from ANY ready pod
+	// This is more reliable than just checking the first endpoint
 	existingCluster := false
-	if clusterInfo == nil {
-		if nodes, nodesErr := runner.ClusterNodes(ctx, firstEndpoint); nodesErr == nil && len(nodes) > 0 {
+	var existingNodes []rediscli.NodeInfo
+
+	// Try each endpoint until we find one that responds with cluster info
+	for _, endpoint := range readyEndpoints {
+		nodes, nodesErr := runner.ClusterNodes(ctx, endpoint)
+		if nodesErr == nil && len(nodes) > 0 {
 			existingCluster = true
+			existingNodes = nodes
+			// Use this endpoint as our first endpoint since it's responding
+			firstEndpoint = endpoint
+			logger.Info("Found existing cluster", "endpoint", endpoint, "nodeCount", len(nodes))
+			break
 		}
 	}
 
-	// Bootstrap cluster if needed
-	if (clusterState == "" || clusterState == "fail") && !existingCluster {
-		if readyCount >= redisCluster.Spec.MinReady {
-			logger.Info("Bootstrapping Redis cluster", "endpoints", readyEndpoints)
-			if err := runner.ClusterCreate(ctx, readyEndpoints); err != nil {
-				// Redis refuses create if nodes already have cluster metadata or data.
-				// Treat that as "already initialized" to prevent a tight job loop.
-				if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
-					logger.Info("Cluster create refused because node is not empty; assuming existing cluster and skipping bootstrap", "error", err)
-				} else {
-					return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("failed to create cluster: %v", err))
-				}
-			}
-			// Re-check cluster state
-			time.Sleep(2 * time.Second)
-			clusterInfo, err = runner.ClusterInfo(ctx, firstEndpoint)
-			if err == nil && clusterInfo != nil {
-				clusterState = clusterInfo["cluster_state"]
+	// Also check if we've previously bootstrapped (status shows cluster was Ready)
+	if redisCluster.Status.Phase == "Ready" && redisCluster.Status.ClusterState == "ok" {
+		existingCluster = true
+		logger.Info("Cluster was previously Ready, skipping bootstrap")
+	}
+
+	// Bootstrap cluster ONLY if:
+	// 1. No existing cluster detected
+	// 2. We have exactly the minimum required nodes (not during scale-up)
+	// 3. Cluster state is empty or fail
+	needsBootstrap := !existingCluster &&
+		(clusterState == "" || clusterState == "fail") &&
+		readyCount == redisCluster.Spec.MinReady
+
+	if needsBootstrap {
+		logger.Info("Bootstrapping Redis cluster", "endpoints", readyEndpoints)
+
+		// Only use the first MinReady endpoints for initial bootstrap
+		bootstrapEndpoints := readyEndpoints
+		if int32(len(bootstrapEndpoints)) > redisCluster.Spec.MinReady {
+			bootstrapEndpoints = readyEndpoints[:redisCluster.Spec.MinReady]
+		}
+
+		if err := runner.ClusterCreate(ctx, bootstrapEndpoints); err != nil {
+			// Redis refuses create if nodes already have cluster metadata or data.
+			// Treat that as "already initialized" to prevent a tight job loop.
+			if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
+				logger.Info("Cluster create refused because node is not empty; assuming existing cluster and skipping bootstrap", "error", err)
+				existingCluster = true
+			} else {
+				return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("failed to create cluster: %v", err))
 			}
 		}
+		// Re-check cluster state
+		time.Sleep(2 * time.Second)
+		clusterInfo, err = runner.ClusterInfo(ctx, firstEndpoint)
+		if err == nil && clusterInfo != nil {
+			clusterState = clusterInfo["cluster_state"]
+		}
+	} else if existingCluster && len(existingNodes) > 0 {
+		logger.Info("Using existing cluster", "nodeCount", len(existingNodes))
 	}
 
 	// Get current cluster nodes

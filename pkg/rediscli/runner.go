@@ -42,21 +42,27 @@ func NewRunner(client client.Client, clientset kubernetes.Interface, namespace, 
 func (r *Runner) Execute(ctx context.Context, command []string) (string, error) {
 	jobName := fmt.Sprintf("redis-cli-%d", time.Now().UnixNano())
 
+	// Use shorter TTL but don't delete too quickly
+	ttlSeconds := int32(60)
+	backoffLimit := int32(0)
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
 			Namespace: r.namespace,
 		},
 		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: func() *int32 { t := int32(300); return &t }(),
+			TTLSecondsAfterFinished: &ttlSeconds,
+			BackoffLimit:            &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
-							Name:    "redis-cli",
-							Image:   RedisCLIImage,
-							Command: command,
+							Name:            "redis-cli",
+							Image:           RedisCLIImage,
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Command:         command,
 							Env: []corev1.EnvVar{
 								{
 									Name:  "REDISCLI_AUTH",
@@ -74,24 +80,31 @@ func (r *Runner) Execute(ctx context.Context, command []string) (string, error) 
 		return "", fmt.Errorf("failed to create job: %w", err)
 	}
 
+	// Wait a moment for the job to be visible in the API
+	time.Sleep(500 * time.Millisecond)
+
 	defer func() {
-		// Clean up job
+		// Clean up job after getting logs
 		_ = r.client.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))
 	}()
 
-	// Wait for job completion
+	// Wait for job completion with retry
 	if err := r.waitForJob(ctx, jobName); err != nil {
 		return "", err
 	}
 
-	// Get pod logs
-	return r.getJobLogs(ctx, jobName)
+	// Get pod logs with retry
+	return r.getJobLogsWithRetry(ctx, jobName, 3)
 }
 
 func (r *Runner) waitForJob(ctx context.Context, jobName string) error {
-	return wait.PollUntilContextTimeout(ctx, 2*time.Second, JobTimeout, true, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(ctx, 1*time.Second, JobTimeout, true, func(ctx context.Context) (bool, error) {
 		job := &batchv1.Job{}
 		if err := r.client.Get(ctx, client.ObjectKey{Name: jobName, Namespace: r.namespace}, job); err != nil {
+			// If the job is not found, it might not be visible yet - retry
+			if strings.Contains(err.Error(), "not found") {
+				return false, nil
+			}
 			return false, err
 		}
 
@@ -131,6 +144,19 @@ func (r *Runner) getJobLogs(ctx context.Context, jobName string) (string, error)
 	}
 
 	return string(logBytes), nil
+}
+
+func (r *Runner) getJobLogsWithRetry(ctx context.Context, jobName string, maxRetries int) (string, error) {
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		logs, err := r.getJobLogs(ctx, jobName)
+		if err == nil {
+			return logs, nil
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	return "", lastErr
 }
 
 // ClusterInfo runs CLUSTER INFO and parses the state
