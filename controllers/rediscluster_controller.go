@@ -17,7 +17,9 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	redisv1alpha1 "github.com/troke12/redis-operator/api/v1alpha1"
 	"github.com/troke12/redis-operator/pkg/rediscli"
@@ -476,5 +478,57 @@ func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1alpha1.RedisCluster{}).
 		Owns(&appsv1.StatefulSet{}).
+		// Watch Pods with redis label and map them to RedisCluster
+		Watches(
+			&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.findRedisClusterForPod),
+		).
 		Complete(r)
+}
+
+// findRedisClusterForPod maps a Pod event to the RedisCluster that manages it
+func (r *RedisClusterReconciler) findRedisClusterForPod(ctx context.Context, obj client.Object) []reconcile.Request {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+
+	// Check if this is a redis pod by looking at labels
+	labels := pod.GetLabels()
+	if labels == nil {
+		return nil
+	}
+
+	// Look for common redis labels
+	_, hasApp := labels["app"]
+	_, hasRedis := labels["app.kubernetes.io/name"]
+	if !hasApp && !hasRedis {
+		return nil
+	}
+
+	// List all RedisCluster resources in the same namespace
+	var redisClusters redisv1alpha1.RedisClusterList
+	if err := r.List(ctx, &redisClusters, client.InNamespace(pod.Namespace)); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, rc := range redisClusters.Items {
+		// Check if the namespace matches (considering spec.namespace override)
+		targetNs := rc.Spec.Namespace
+		if targetNs == "" {
+			targetNs = rc.Namespace
+		}
+
+		if pod.Namespace == targetNs {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      rc.Name,
+					Namespace: rc.Namespace,
+				},
+			})
+		}
+	}
+
+	return requests
 }
