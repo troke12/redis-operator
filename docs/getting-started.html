@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Getting Started - Redis Operator</title>
+  <meta name="description" content="Installation guide for Redis Operator on Kubernetes">
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128736;</text></svg>">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 32 32" fill="currentColor">
+          <path d="M16 0C7.163 0 0 7.163 0 16s7.163 16 16 16 16-7.163 16-16S24.837 0 16 0zm0 4c6.627 0 12 5.373 12 12s-5.373 12-12 12S4 22.627 4 16 9.373 4 16 4zm-2 6v4h-4v4h4v4h4v-4h4v-4h-4v-4h-4z"/>
+        </svg>
+        Redis Operator
+      </a>
+      <nav class="nav">
+        <a href="index.html">Home</a>
+        <a href="getting-started.html" class="active">Getting Started</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="architecture.html">Architecture</a>
+      </nav>
+      <a href="https://github.com/troke12/redis-operator" class="github-link" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="container">
+    <div class="doc-content">
+      <h1>Getting Started</h1>
+      <p class="subtitle">Install the Redis Operator on your Kubernetes cluster</p>
+
+      <h2>Prerequisites</h2>
+      <ul>
+        <li>Kubernetes cluster version 1.20 or higher</li>
+        <li><code>kubectl</code> configured to access your cluster</li>
+        <li>Helm 3.x (for Helm installation)</li>
+        <li>A StorageClass available for persistent volumes</li>
+      </ul>
+
+      <h2>Installation Methods</h2>
+      <p>Choose the installation method that best fits your needs:</p>
+
+      <h3>Option A: Helm (Recommended)</h3>
+      <p>The easiest way to install the Redis Operator is using Helm. The chart includes CRDs, RBAC, and the operator deployment.</p>
+
+      <h4>Step 1: Add the Helm repository</h4>
+      <pre><code>helm repo add troke12 https://troke12.github.io/redis-operator
+helm repo update</code></pre>
+
+      <h4>Step 2: Install the operator only</h4>
+      <p>This installs just the operator without creating a Redis cluster:</p>
+      <pre><code>helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace</code></pre>
+
+      <h4>Step 3: (Optional) Install with a Redis cluster</h4>
+      <p>To deploy the operator along with a managed Redis cluster:</p>
+      <pre><code>helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace \
+  --set redisCluster.enabled=true \
+  --set redisCluster.password='your-secure-password'</code></pre>
+
+      <div class="alert alert-info">
+        <span class="alert-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+        </span>
+        <div>
+          <strong>Tip:</strong> You can customize the installation using a <code>values.yaml</code> file.
+          See the <a href="configuration.html">Configuration</a> page for all available options.
+        </div>
+      </div>
+
+      <h4>Custom Image Configuration</h4>
+      <p>To use a custom operator image:</p>
+      <pre><code>helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace \
+  --set image.repository=your-registry/redis-operator \
+  --set image.tag=v1.0.0</code></pre>
+
+      <h3>Option B: Raw Manifests</h3>
+      <p>For users who prefer not to use Helm, you can deploy using raw Kubernetes manifests.</p>
+
+      <h4>Step 1: Clone the repository</h4>
+      <pre><code>git clone https://github.com/troke12/redis-operator.git
+cd redis-operator</code></pre>
+
+      <h4>Step 2: Deploy Redis resources</h4>
+      <pre><code>kubectl apply -f manifests/redis/</code></pre>
+      <p>This creates:</p>
+      <ul>
+        <li>Secret with Redis password</li>
+        <li>Headless Service for pod DNS</li>
+        <li>ConfigMap with Redis configuration</li>
+        <li>StatefulSet with 3 Redis pods</li>
+      </ul>
+
+      <h4>Step 3: Deploy the operator</h4>
+      <pre><code># Install CRD
+kubectl apply -f config/crd/bases/
+
+# Install RBAC
+kubectl apply -f config/rbac/
+
+# Deploy the operator
+kubectl apply -f config/manager/manager.yaml</code></pre>
+
+      <h4>Step 4: Create a RedisCluster resource</h4>
+      <pre><code>kubectl apply -f manifests/redis/rediscluster.yaml</code></pre>
+
+      <h2>Verify Installation</h2>
+      <p>After installation, verify that everything is running correctly:</p>
+
+      <h4>Check operator status</h4>
+      <pre><code>kubectl get pods -n redis-operator</code></pre>
+      <p>You should see the operator pod running:</p>
+      <pre><code>NAME                                           READY   STATUS    RESTARTS   AGE
+redis-operator-controller-manager-xxx-yyy      1/1     Running   0          1m</code></pre>
+
+      <h4>Check RedisCluster status</h4>
+      <pre><code>kubectl get rediscluster -n redis-operator</code></pre>
+      <p>After bootstrap completes, you should see:</p>
+      <pre><code>NAME            STATUS   NODES   AGE
+redis-cluster   Ready    3       5m</code></pre>
+
+      <h4>Watch cluster bootstrap</h4>
+      <pre><code>kubectl get rediscluster redis-cluster -n redis-operator -w</code></pre>
+      <p>The operator will:</p>
+      <ol>
+        <li>Wait for 3 pods to be ready</li>
+        <li>Bootstrap the Redis cluster automatically</li>
+        <li>Update status to <code>Ready</code> with <code>cluster_state: ok</code></li>
+      </ol>
+
+      <h2>Scaling Operations</h2>
+
+      <h3>Scale Up</h3>
+      <p>To add more nodes to your cluster:</p>
+      <pre><code># Scale the StatefulSet
+kubectl scale statefulset redis -n redis-operator --replicas=5
+
+# The operator automatically adds new nodes to the cluster</code></pre>
+
+      <h3>Scale Down</h3>
+      <p>To remove nodes from your cluster:</p>
+      <pre><code># Scale the StatefulSet
+kubectl scale statefulset redis -n redis-operator --replicas=3</code></pre>
+      <p>The operator will:</p>
+      <ol>
+        <li>Rebalance slots if <code>autoRebalance=true</code></li>
+        <li>Remove nodes from the cluster</li>
+        <li>Issue <code>CLUSTER FORGET</code> on remaining nodes</li>
+      </ol>
+
+      <div class="alert alert-warning">
+        <span class="alert-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </span>
+        <div>
+          <strong>Warning:</strong> Always ensure you have at least 3 nodes in the cluster.
+          Redis Cluster requires a minimum of 3 master nodes to function.
+        </div>
+      </div>
+
+      <h2>Next Steps</h2>
+      <ul>
+        <li><a href="configuration.html">Configuration Reference</a> - Learn about all available options</li>
+        <li><a href="architecture.html">Architecture</a> - Understand how the operator works</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>
+      Redis Operator is open source software licensed under the MIT License.
+      <br>
+      Maintained by <a href="https://github.com/troke12" target="_blank">troke12</a>
+    </p>
+  </footer>
+</body>
+</html>

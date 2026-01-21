@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
+      - master
+      - development
+    paths:
+      - "docs/**"
+      - "charts/**"
+      - ".github/workflows/helm-gh-pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -24,13 +32,26 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Package chart
+      - name: Build documentation site
+        run: |
+          # Create output directory
+          mkdir -p _site
+
+          # Copy documentation files from docs/ folder
+          cp -r docs/* _site/
+
+          # Download existing index.yaml from GitHub Pages to preserve chart history
+          curl -sL https://troke12.github.io/redis-operator/index.yaml -o _site/index.yaml 2>/dev/null || touch _site/index.yaml
+
+      - name: Package Helm chart
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG="${GITHUB_REF_NAME}"
+
           # Require tags like v1.2.3 (no bare "v", no v1 or v1.2)
           if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Ref '${TAG}' is not a semantic release tag (expected vX.Y.Z). Aborting Helm publish."
-            exit 1
+            echo "Ref '${TAG}' is not a semantic release tag (expected vX.Y.Z). Skipping Helm packaging."
+            exit 0
           fi
 
           VERSION="${TAG#v}"
@@ -50,59 +71,23 @@ jobs:
           # Copy repo README into chart so it is bundled in the .tgz
           cp README.md charts/redis-operator/README.md
 
-          mkdir -p docs
-          
-          # Download existing index.yaml from GitHub Pages to merge with new chart
-          curl -sL https://troke12.github.io/redis-operator/index.yaml -o docs/index.yaml || touch docs/index.yaml
-          
           # Package the chart
-          helm package charts/redis-operator --destination docs
-          
+          helm package charts/redis-operator --destination _site
+
           # Update index.yaml, merging with existing entries
-          helm repo index docs --url https://troke12.github.io/redis-operator --merge docs/index.yaml
-          
-          CHART_TGZ="$(ls -1 docs/*.tgz | head -n 1)"
-          CHART_BASENAME="$(basename "${CHART_TGZ}")"
-          # stable link for humans/tools
-          ln -sf "${CHART_BASENAME}" docs/redis-operator-latest.tgz || true
+          helm repo index _site --url https://troke12.github.io/redis-operator --merge _site/index.yaml
 
-          cat > docs/index.html <<EOF
-          <!doctype html>
-          <html lang="en">
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>troke12 Helm Repo</title>
-              <style>
-                body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; margin: 40px; max-width: 900px; }
-                code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-                pre { background: #0b1020; color: #e6e6e6; padding: 16px; border-radius: 10px; overflow: auto; }
-                a { color: #2563eb; text-decoration: none; }
-                a:hover { text-decoration: underline; }
-                .hint { color: #374151; }
-              </style>
-            </head>
-            <body>
-              <h1>troke12 Helm Repository</h1>
-              <p class="hint">Static Helm repo hosted on GitHub Pages.</p>
-
-              <h2>Use</h2>
-              <pre><code>helm repo add troke12 https://troke12.github.io/redis-operator
-          helm repo update
-          helm search repo troke12
-
-          # install
-          helm install redis-operator troke12/redis-operator --namespace redis-operator --create-namespace</code></pre>
-
-              <p class="hint">Helm repo URL: https://troke12.github.io/redis-operator</p>
-            </body>
-          </html>
-          EOF
+          CHART_TGZ="$(ls -1 _site/*.tgz | head -n 1)"
+          if [[ -n "${CHART_TGZ}" ]]; then
+            CHART_BASENAME="$(basename "${CHART_TGZ}")"
+            # stable link for humans/tools
+            ln -sf "${CHART_BASENAME}" _site/redis-operator-latest.tgz || true
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: _site
 
   deploy:
     needs: build
