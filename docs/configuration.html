@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration - Redis Operator</title>
+  <meta name="description" content="Configuration reference for Redis Operator Helm chart and RedisCluster CRD">
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128736;</text></svg>">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 32 32" fill="currentColor">
+          <path d="M16 0C7.163 0 0 7.163 0 16s7.163 16 16 16 16-7.163 16-16S24.837 0 16 0zm0 4c6.627 0 12 5.373 12 12s-5.373 12-12 12S4 22.627 4 16 9.373 4 16 4zm-2 6v4h-4v4h4v4h4v-4h4v-4h-4v-4h-4z"/>
+        </svg>
+        Redis Operator
+      </a>
+      <nav class="nav">
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="configuration.html" class="active">Configuration</a>
+        <a href="architecture.html">Architecture</a>
+      </nav>
+      <a href="https://github.com/troke12/redis-operator" class="github-link" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="container">
+    <div class="doc-content">
+      <h1>Configuration</h1>
+      <p class="subtitle">Complete reference for Helm values and RedisCluster specification</p>
+
+      <h2>Helm Values Reference</h2>
+      <p>The following tables list the configurable parameters of the Redis Operator chart.</p>
+
+      <h3>Operator Settings</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>replicaCount</code></td>
+              <td>Number of operator replicas</td>
+              <td><code>1</code></td>
+            </tr>
+            <tr>
+              <td><code>image.repository</code></td>
+              <td>Operator image repository</td>
+              <td><code>troke12/redis-operator</code></td>
+            </tr>
+            <tr>
+              <td><code>image.tag</code></td>
+              <td>Operator image tag</td>
+              <td><code>latest</code></td>
+            </tr>
+            <tr>
+              <td><code>image.pullPolicy</code></td>
+              <td>Image pull policy</td>
+              <td><code>Always</code></td>
+            </tr>
+            <tr>
+              <td><code>imagePullSecrets</code></td>
+              <td>Image pull secrets</td>
+              <td><code>[]</code></td>
+            </tr>
+            <tr>
+              <td><code>nameOverride</code></td>
+              <td>Override chart name</td>
+              <td><code>""</code></td>
+            </tr>
+            <tr>
+              <td><code>fullnameOverride</code></td>
+              <td>Override full resource names</td>
+              <td><code>""</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Service Account & RBAC</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>serviceAccount.create</code></td>
+              <td>Create a service account</td>
+              <td><code>true</code></td>
+            </tr>
+            <tr>
+              <td><code>serviceAccount.name</code></td>
+              <td>Service account name (auto-generated if empty)</td>
+              <td><code>""</code></td>
+            </tr>
+            <tr>
+              <td><code>rbac.create</code></td>
+              <td>Create RBAC resources</td>
+              <td><code>true</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Resource Limits</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>resources.limits.cpu</code></td>
+              <td>CPU limit for operator</td>
+              <td><code>500m</code></td>
+            </tr>
+            <tr>
+              <td><code>resources.limits.memory</code></td>
+              <td>Memory limit for operator</td>
+              <td><code>128Mi</code></td>
+            </tr>
+            <tr>
+              <td><code>resources.requests.cpu</code></td>
+              <td>CPU request for operator</td>
+              <td><code>10m</code></td>
+            </tr>
+            <tr>
+              <td><code>resources.requests.memory</code></td>
+              <td>Memory request for operator</td>
+              <td><code>64Mi</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Node Scheduling</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>nodeSelector</code></td>
+              <td>Node selector for operator pods</td>
+              <td><code>{}</code></td>
+            </tr>
+            <tr>
+              <td><code>tolerations</code></td>
+              <td>Tolerations for operator pods</td>
+              <td><code>[]</code></td>
+            </tr>
+            <tr>
+              <td><code>affinity</code></td>
+              <td>Affinity rules for operator pods</td>
+              <td><code>{}</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Redis StatefulSet</h3>
+      <p>These settings control the Redis StatefulSet created by the chart.</p>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>redis.enabled</code></td>
+              <td>Deploy Redis StatefulSet</td>
+              <td><code>true</code></td>
+            </tr>
+            <tr>
+              <td><code>redis.image</code></td>
+              <td>Redis image</td>
+              <td><code>troke12/redis-cluster:6.2-alpine</code></td>
+            </tr>
+            <tr>
+              <td><code>redis.imagePullPolicy</code></td>
+              <td>Redis image pull policy</td>
+              <td><code>Always</code></td>
+            </tr>
+            <tr>
+              <td><code>redis.replicas</code></td>
+              <td>Number of Redis replicas</td>
+              <td><code>3</code></td>
+            </tr>
+            <tr>
+              <td><code>redis.storage.size</code></td>
+              <td>PVC size for Redis data</td>
+              <td><code>1Gi</code></td>
+            </tr>
+            <tr>
+              <td><code>redis.storage.storageClassName</code></td>
+              <td>Storage class name (empty for default)</td>
+              <td><code>""</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>RedisCluster CR Settings</h3>
+      <p>These settings configure the RedisCluster custom resource that the operator manages.</p>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>redisCluster.enabled</code></td>
+              <td>Create a RedisCluster resource</td>
+              <td><code>true</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.name</code></td>
+              <td>Name of the RedisCluster</td>
+              <td><code>redis-cluster</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.namespace</code></td>
+              <td>Namespace (defaults to release namespace)</td>
+              <td><code>""</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.replicas</code></td>
+              <td>Number of Redis nodes</td>
+              <td><code>3</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.minReady</code></td>
+              <td>Minimum ready pods before bootstrap</td>
+              <td><code>3</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.autoRebalance</code></td>
+              <td>Auto-rebalance slots on scale down</td>
+              <td><code>true</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.serviceName</code></td>
+              <td>Headless service name</td>
+              <td><code>redis-headless</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.statefulSetName</code></td>
+              <td>StatefulSet name</td>
+              <td><code>redis</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.passwordSecretName</code></td>
+              <td>Secret name for password</td>
+              <td><code>redis-auth</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.passwordSecretKey</code></td>
+              <td>Key in secret for password</td>
+              <td><code>REDIS_PASSWORD</code></td>
+            </tr>
+            <tr>
+              <td><code>redisCluster.password</code></td>
+              <td>Password (creates Secret if set)</td>
+              <td><code>""</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>RedisCluster CRD Specification</h2>
+      <p>The RedisCluster custom resource defines the desired state of your Redis cluster.</p>
+
+      <h3>Example RedisCluster</h3>
+      <pre><code>apiVersion: redis.redis-operator.io/v1alpha1
+kind: RedisCluster
+metadata:
+  name: redis-cluster
+  namespace: redis-operator
+spec:
+  replicas: 3                    # Number of Redis nodes (min 3)
+  minReady: 3                    # Minimum ready pods before bootstrap
+  autoRebalance: true            # Auto-rebalance slots on scale down
+  serviceName: redis-headless    # Headless service name
+  statefulSetName: redis         # StatefulSet name
+  passwordSecretRef:
+    name: redis-auth             # Secret name
+    key: REDIS_PASSWORD          # Secret key</code></pre>
+
+      <h3>Spec Fields</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Type</th>
+              <th>Description</th>
+              <th>Required</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>replicas</code></td>
+              <td>integer</td>
+              <td>Number of Redis nodes in the cluster (minimum 3)</td>
+              <td><span class="badge badge-required">Required</span></td>
+            </tr>
+            <tr>
+              <td><code>minReady</code></td>
+              <td>integer</td>
+              <td>Minimum pods that must be ready before cluster bootstrap</td>
+              <td><span class="badge badge-optional">Optional</span></td>
+            </tr>
+            <tr>
+              <td><code>autoRebalance</code></td>
+              <td>boolean</td>
+              <td>Automatically migrate slots during scale-down</td>
+              <td><span class="badge badge-optional">Optional</span></td>
+            </tr>
+            <tr>
+              <td><code>serviceName</code></td>
+              <td>string</td>
+              <td>Name of the headless service for pod DNS</td>
+              <td><span class="badge badge-required">Required</span></td>
+            </tr>
+            <tr>
+              <td><code>statefulSetName</code></td>
+              <td>string</td>
+              <td>Name of the StatefulSet managing Redis pods</td>
+              <td><span class="badge badge-required">Required</span></td>
+            </tr>
+            <tr>
+              <td><code>passwordSecretRef.name</code></td>
+              <td>string</td>
+              <td>Name of the Secret containing the Redis password</td>
+              <td><span class="badge badge-optional">Optional</span></td>
+            </tr>
+            <tr>
+              <td><code>passwordSecretRef.key</code></td>
+              <td>string</td>
+              <td>Key in the Secret that contains the password</td>
+              <td><span class="badge badge-optional">Optional</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Status Fields</h3>
+      <p>The operator updates these status fields to reflect the current state:</p>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>status.phase</code></td>
+              <td>Current phase: <code>Pending</code>, <code>Bootstrapping</code>, <code>Ready</code>, <code>Failed</code></td>
+            </tr>
+            <tr>
+              <td><code>status.clusterState</code></td>
+              <td>Redis cluster state: <code>ok</code>, <code>fail</code></td>
+            </tr>
+            <tr>
+              <td><code>status.nodes</code></td>
+              <td>Number of nodes currently in the cluster</td>
+            </tr>
+            <tr>
+              <td><code>status.message</code></td>
+              <td>Human-readable status message</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Example Configurations</h2>
+
+      <h3>Production Setup</h3>
+      <p>A production-ready configuration with 6 nodes:</p>
+      <pre><code>helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace \
+  --set redis.replicas=6 \
+  --set redis.storage.size=10Gi \
+  --set redis.storage.storageClassName=fast-ssd \
+  --set redisCluster.enabled=true \
+  --set redisCluster.replicas=6 \
+  --set redisCluster.password='your-secure-password'</code></pre>
+
+      <h3>Using values.yaml</h3>
+      <p>Create a <code>values.yaml</code> file:</p>
+      <pre><code># values.yaml
+replicaCount: 1
+
+image:
+  repository: troke12/redis-operator
+  tag: v1.0.0
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+redis:
+  enabled: true
+  replicas: 6
+  storage:
+    size: 10Gi
+    storageClassName: fast-ssd
+
+redisCluster:
+  enabled: true
+  replicas: 6
+  autoRebalance: true
+  password: ""  # Use existing secret instead</code></pre>
+
+      <p>Install with the values file:</p>
+      <pre><code>helm install redis-operator troke12/redis-operator \
+  --namespace redis-operator \
+  --create-namespace \
+  -f values.yaml</code></pre>
+
+      <h2>Next Steps</h2>
+      <ul>
+        <li><a href="architecture.html">Architecture</a> - Learn how the operator works internally</li>
+        <li><a href="getting-started.html">Getting Started</a> - Installation and basic usage</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>
+      Redis Operator is open source software licensed under the MIT License.
+      <br>
+      Maintained by <a href="https://github.com/troke12" target="_blank">troke12</a>
+    </p>
+  </footer>
+</body>
+</html>
