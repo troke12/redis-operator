@@ -18,8 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	redisv1alpha1 "github.com/redis-operator/redis-operator/api/v1alpha1"
-	"github.com/redis-operator/redis-operator/pkg/rediscli"
+	redisv1alpha1 "github.com/troke12/redis-operator/api/v1alpha1"
+	"github.com/troke12/redis-operator/pkg/rediscli"
 )
 
 // RedisClusterReconciler reconciles a RedisCluster object
