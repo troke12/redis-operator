@@ -14,8 +14,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	redisv1alpha1 "github.com/redis-operator/redis-operator/api/v1alpha1"
-	"github.com/redis-operator/redis-operator/controllers"
+	redisv1alpha1 "github.com/troke12/redis-operator/api/v1alpha1"
+	"github.com/troke12/redis-operator/controllers"
 	//+kubebuilder:scaffold:imports
 )
 

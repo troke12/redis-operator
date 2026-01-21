@@ -2,7 +2,7 @@ domain: redis-operator.io
 layout:
 - go.kubebuilder.io/v4
 projectName: redis-operator
-repo: github.com/redis-operator/redis-operator
+repo: github.com/troke12/redis-operator
 resources:
 - api:
     crdVersion: v1
@@ -11,6 +11,6 @@ resources:
   domain: redis-operator.io
   group: redis
   kind: RedisCluster
-  path: github.com/redis-operator/redis-operator/api/v1alpha1
+  path: github.com/troke12/redis-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

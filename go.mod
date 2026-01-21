@@ -1,4 +1,4 @@
-module github.com/redis-operator/redis-operator
+module github.com/troke12/redis-operator
 
 go 1.21
 
