@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: default
+spec:
+  # Ensure at least 2 nodes are available at any time (for a 3-node cluster)
+  # Adjust minAvailable based on your cluster size
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: redis

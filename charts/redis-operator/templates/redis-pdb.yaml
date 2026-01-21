@@ -1,0 +1,22 @@
+{{- if .Values.redis.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis
+    app.kubernetes.io/name: {{ include "redis-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+spec:
+  # Ensure at least N-1 nodes are available at any time
+  # This allows one node to be unavailable during upgrades/scaling
+  minAvailable: {{ sub .Values.redis.replicas 1 | default 2 }}
+  selector:
+    matchLabels:
+      app: redis
+{{- end }}

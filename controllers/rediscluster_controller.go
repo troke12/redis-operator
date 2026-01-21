@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -193,69 +194,72 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Handle scale up: add missing nodes
+	nodesAdded := false
 	for _, endpoint := range readyEndpoints {
 		if _, exists := endpointToNodeID[endpoint]; !exists {
 			logger.Info("Adding node to cluster", "endpoint", endpoint)
 			if err := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); err != nil {
 				// If the node is already initialized/non-empty, skip to avoid tight loop
 				if strings.Contains(err.Error(), "is not empty") || strings.Contains(err.Error(), "already knows other nodes") {
-					logger.Info("Skip add-node: node already initialized", "endpoint", endpoint, "error", err)
+					logger.Info("Add-node refused: node not empty; trying flushall + cluster reset", "endpoint", endpoint, "error", err)
+					if flushErr := runner.FlushAll(ctx, endpoint); flushErr != nil {
+						logger.Error(flushErr, "Failed to flushall before reset; will skip add-node", "endpoint", endpoint)
+						continue
+					}
+					if resetErr := runner.ClusterResetHard(ctx, endpoint); resetErr != nil {
+						logger.Error(resetErr, "Failed to cluster reset node; will skip add-node", "endpoint", endpoint)
+						continue
+					}
+					if retryErr := runner.ClusterAddNode(ctx, endpoint, firstEndpoint); retryErr != nil {
+						logger.Error(retryErr, "Retry add-node failed after reset", "endpoint", endpoint)
+						continue
+					}
+					logger.Info("Add-node succeeded after reset", "endpoint", endpoint)
 				} else {
 					logger.Error(err, "Failed to add node", "endpoint", endpoint)
-				}
-				continue
-			}
-			// Rebalance if enabled
-			if redisCluster.Spec.AutoRebalance {
-				time.Sleep(1 * time.Second)
-				if err := runner.ClusterRebalance(ctx, firstEndpoint, true); err != nil {
-					logger.Error(err, "Failed to rebalance cluster")
+					continue
 				}
 			}
+			nodesAdded = true
+			logger.Info("Successfully added node to cluster", "endpoint", endpoint)
+		}
+	}
+
+	// Rebalance after all nodes are added (if any were added and auto-rebalance enabled)
+	if nodesAdded && redisCluster.Spec.AutoRebalance {
+		logger.Info("Rebalancing cluster after scale-up")
+		time.Sleep(2 * time.Second)
+		if err := runner.ClusterRebalance(ctx, firstEndpoint, true); err != nil {
+			logger.Error(err, "Failed to rebalance cluster after scale-up")
 		}
 	}
 
 	// Handle scale down: remove nodes that no longer exist
-	for _, node := range clusterNodes {
-		endpoint := node.Addr
-		// Check if this endpoint corresponds to a ready pod
-		found := false
-		for _, ep := range readyEndpoints {
-			if ep == endpoint || strings.Contains(endpoint, ep) {
-				found = true
-				break
-			}
-		}
-		// Also check by pod name pattern
-		if !found {
-			for _, pod := range readyPods {
-				if strings.Contains(endpoint, pod.Name) {
-					found = true
-					break
-				}
-			}
-		}
+	// Build a set of ready pod IPs for quick lookup
+	readyPodIPs := make(map[string]bool)
+	for _, pod := range readyPods {
+		readyPodIPs[pod.Status.PodIP] = true
+	}
 
-		if !found {
-			logger.Info("Removing node from cluster", "nodeID", node.ID, "endpoint", endpoint)
-			// If node has slots, migrate them first
-			if strings.Contains(node.Flags, "master") && redisCluster.Spec.AutoRebalance {
-				logger.Info("Rebalancing before removing master node", "nodeID", node.ID)
-				if err := runner.ClusterRebalance(ctx, firstEndpoint, false); err != nil {
-					logger.Error(err, "Failed to rebalance before removal")
-				}
-			}
-			// Remove node
-			if err := runner.ClusterDelNode(ctx, firstEndpoint, node.ID); err != nil {
-				logger.Error(err, "Failed to delete node", "nodeID", node.ID)
-			} else {
-				// Forget node from all remaining nodes
-				for _, remainingNode := range clusterNodes {
-					if remainingNode.ID != node.ID {
-						_ = runner.ClusterForget(ctx, remainingNode.Addr, node.ID)
-					}
-				}
-			}
+	// Identify nodes to remove
+	var nodesToRemove []rediscli.NodeInfo
+	for _, node := range clusterNodes {
+		// Extract IP from node address (format: IP:port)
+		nodeIP := extractIP(node.Addr)
+
+		// Check if node IP is in the set of ready pod IPs
+		if !readyPodIPs[nodeIP] {
+			nodesToRemove = append(nodesToRemove, node)
+		}
+	}
+
+	if len(nodesToRemove) > 0 {
+		logger.Info("Nodes to remove from cluster", "count", len(nodesToRemove))
+
+		// First, handle masters with slots - migrate their data safely
+		if err := r.handleScaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
+			logger.Error(err, "Failed to handle scale-down safely")
+			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
 		}
 	}
 
@@ -296,6 +300,156 @@ func isPodReady(pod *corev1.Pod) bool {
 
 func buildEndpoint(podIP string) string {
 	return fmt.Sprintf("%s:6379", podIP)
+}
+
+// extractIP extracts the IP address from an endpoint string (IP:port)
+func extractIP(endpoint string) string {
+	if idx := strings.Index(endpoint, ":"); idx != -1 {
+		return endpoint[:idx]
+	}
+	return endpoint
+}
+
+// handleScaleDown safely removes nodes from the cluster, migrating slots first
+func (r *RedisClusterReconciler) handleScaleDown(
+	ctx context.Context,
+	logger logr.Logger,
+	runner *rediscli.Runner,
+	allNodes []rediscli.NodeInfo,
+	nodesToRemove []rediscli.NodeInfo,
+	clusterEndpoint string,
+	autoRebalance bool,
+) error {
+	// Separate masters and replicas being removed
+	var mastersToRemove []rediscli.NodeInfo
+	var replicasToRemove []rediscli.NodeInfo
+
+	for _, node := range nodesToRemove {
+		if node.Role == "master" {
+			mastersToRemove = append(mastersToRemove, node)
+		} else {
+			replicasToRemove = append(replicasToRemove, node)
+		}
+	}
+
+	// Find remaining healthy masters (masters that will stay in the cluster)
+	remainingMasters := make([]rediscli.NodeInfo, 0)
+	removeNodeIDs := make(map[string]bool)
+	for _, n := range nodesToRemove {
+		removeNodeIDs[n.ID] = true
+	}
+	for _, node := range allNodes {
+		if node.Role == "master" && !removeNodeIDs[node.ID] {
+			remainingMasters = append(remainingMasters, node)
+		}
+	}
+
+	// Sort remaining masters by slot count (ascending) to balance the load
+	sort.Slice(remainingMasters, func(i, j int) bool {
+		return remainingMasters[i].SlotCount() < remainingMasters[j].SlotCount()
+	})
+
+	// Step 1: Migrate slots from masters being removed
+	for _, master := range mastersToRemove {
+		if master.HasSlots() {
+			slotCount := master.SlotCount()
+			if slotCount > 0 && len(remainingMasters) > 0 {
+				logger.Info("Migrating slots from master being removed",
+					"nodeID", master.ID,
+					"endpoint", master.Addr,
+					"slotCount", slotCount)
+
+				// Distribute slots among remaining masters
+				slotsPerMaster := slotCount / len(remainingMasters)
+				remainder := slotCount % len(remainingMasters)
+
+				for i, targetMaster := range remainingMasters {
+					slotsToMove := slotsPerMaster
+					if i < remainder {
+						slotsToMove++
+					}
+					if slotsToMove == 0 {
+						continue
+					}
+
+					logger.Info("Resharding slots to remaining master",
+						"fromNodeID", master.ID,
+						"toNodeID", targetMaster.ID,
+						"slots", slotsToMove)
+
+					if err := runner.ClusterReshard(ctx, clusterEndpoint, master.ID, targetMaster.ID, slotsToMove); err != nil {
+						logger.Error(err, "Failed to reshard slots",
+							"fromNodeID", master.ID,
+							"toNodeID", targetMaster.ID)
+						// Try to continue with other masters
+						continue
+					}
+				}
+
+				// Wait for slot migration to complete
+				time.Sleep(2 * time.Second)
+			}
+		}
+	}
+
+	// Step 2: Remove replicas first (they don't hold slots)
+	for _, replica := range replicasToRemove {
+		logger.Info("Removing replica node", "nodeID", replica.ID, "endpoint", replica.Addr)
+		if err := runner.ClusterDelNode(ctx, clusterEndpoint, replica.ID); err != nil {
+			logger.Error(err, "Failed to delete replica node", "nodeID", replica.ID)
+			// Continue trying to remove other nodes
+		} else {
+			// Forget node from all remaining nodes
+			for _, node := range allNodes {
+				if node.ID != replica.ID && !removeNodeIDs[node.ID] {
+					_ = runner.ClusterForget(ctx, node.Addr, replica.ID)
+				}
+			}
+		}
+	}
+
+	// Step 3: Remove masters (now with no slots)
+	for _, master := range mastersToRemove {
+		logger.Info("Removing master node", "nodeID", master.ID, "endpoint", master.Addr)
+
+		// Double-check the master has no slots before removing
+		// Re-fetch node info to get current slot status
+		updatedNodes, err := runner.ClusterNodes(ctx, clusterEndpoint)
+		if err == nil {
+			for _, n := range updatedNodes {
+				if n.ID == master.ID && n.HasSlots() {
+					logger.Error(nil, "Master still has slots, cannot remove safely",
+						"nodeID", master.ID,
+						"slotCount", n.SlotCount())
+					continue
+				}
+			}
+		}
+
+		if err := runner.ClusterDelNode(ctx, clusterEndpoint, master.ID); err != nil {
+			logger.Error(err, "Failed to delete master node", "nodeID", master.ID)
+			continue
+		}
+
+		// Forget node from all remaining nodes
+		for _, node := range allNodes {
+			if node.ID != master.ID && !removeNodeIDs[node.ID] {
+				_ = runner.ClusterForget(ctx, node.Addr, master.ID)
+			}
+		}
+	}
+
+	// Step 4: Rebalance if enabled to redistribute slots evenly
+	if autoRebalance && len(remainingMasters) > 0 {
+		logger.Info("Rebalancing cluster after scale-down")
+		time.Sleep(2 * time.Second)
+		if err := runner.ClusterRebalance(ctx, clusterEndpoint, false); err != nil {
+			logger.Error(err, "Failed to rebalance after scale-down")
+			// Non-fatal error, continue
+		}
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

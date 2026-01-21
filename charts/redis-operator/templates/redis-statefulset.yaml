@@ -23,6 +23,7 @@ spec:
       labels:
         app: redis
     spec:
+      terminationGracePeriodSeconds: 60
       volumes:
         - name: config
           configMap:
@@ -57,6 +58,25 @@ spec:
                   name: {{ .Values.redisCluster.passwordSecretName }}
                   key: {{ .Values.redisCluster.passwordSecretKey }}
                   optional: false
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    LAST_SAVE=$(redis-cli -a "${REDIS_PASSWORD}" LASTSAVE 2>/dev/null)
+                    redis-cli -a "${REDIS_PASSWORD}" BGSAVE 2>/dev/null || true
+                    TIMEOUT=30
+                    while [ $TIMEOUT -gt 0 ]; do
+                      NEW_SAVE=$(redis-cli -a "${REDIS_PASSWORD}" LASTSAVE 2>/dev/null)
+                      if [ "$NEW_SAVE" != "$LAST_SAVE" ]; then
+                        break
+                      fi
+                      sleep 1
+                      TIMEOUT=$((TIMEOUT - 1))
+                    done
+                    sleep 5
           readinessProbe:
             exec:
               command:
