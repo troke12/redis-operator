@@ -38,7 +38,7 @@ redis:
     storageClassName: "" # set to your StorageClass name to override
 
 redisCluster:
-  enabled: false
+  enabled: true
   name: redis-cluster
   namespace: ""
   replicas: 3
