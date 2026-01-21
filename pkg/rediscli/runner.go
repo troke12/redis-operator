@@ -544,3 +544,69 @@ func (r *Runner) WaitForClusterConverge(ctx context.Context, endpoints []string,
 	}
 	return fmt.Errorf("cluster did not converge within %v", maxWait)
 }
+
+// CheckNodeNeedsReset checks if a node has stale cluster data or keys that need to be cleared
+func (r *Runner) CheckNodeNeedsReset(ctx context.Context, endpoint string) (bool, error) {
+	host, port := r.splitEndpoint(endpoint)
+
+	// Check if node knows other cluster nodes
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" cluster nodes", host, port),
+	}
+	output, err := r.Execute(ctx, cmd)
+	if err != nil {
+		return false, err
+	}
+
+	// Parse cluster nodes output - if there's more than just the node itself, it knows others
+	nodeCount := 0
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		if strings.Contains(line, ":") {
+			nodeCount++
+		}
+	}
+
+	if nodeCount > 1 {
+		return true, nil // Knows other nodes
+	}
+
+	// Check if node has any keys in database 0
+	cmd = []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" dbsize", host, port),
+	}
+	output, err = r.Execute(ctx, cmd)
+	if err != nil {
+		return false, err
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		// Output format: "# Keyspace" or "db0:keys=N,expires=M"
+		if strings.Contains(line, "keys=") {
+			// Has keys
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// FlushAllAsync flushes all data asynchronously (faster for large datasets)
+func (r *Runner) FlushAllAsync(ctx context.Context, endpoint string) error {
+	host, port := r.splitEndpoint(endpoint)
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf("redis-cli -h %s -p %s -a \"$REDISCLI_AUTH\" flushall async", host, port),
+	}
+	_, err := r.Execute(ctx, cmd)
+	return err
+}
