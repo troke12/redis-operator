@@ -2,8 +2,22 @@ apiVersion: v1
 entries:
   redis-operator:
   - apiVersion: v2
+    appVersion: 1.1.28
+    created: "2026-01-22T11:51:56.139096914Z"
+    description: Helm chart to deploy the Redis Operator and an optional RedisCluster
+    digest: 4223734f51430aa376ae05ba626ef52f8b3fe3726d09e3a793eda5a20f197931
+    home: https://github.com/troke12/redis-operator
+    maintainers:
+    - email: ochi@troke.id
+      name: troke12
+    name: redis-operator
+    type: application
+    urls:
+    - https://troke.id/redis-operator/redis-operator-1.1.28.tgz
+    version: 1.1.28
+  - apiVersion: v2
     appVersion: 1.1.27
-    created: "2026-01-22T11:26:06.324118911Z"
+    created: "2026-01-22T11:51:56.138481068Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: e55df7181576bf8c3cb2fb38383b1540786c5b1334c41512ffa49fadc43e50c1
     home: https://github.com/troke12/redis-operator
@@ -17,7 +31,7 @@ entries:
     version: 1.1.27
   - apiVersion: v2
     appVersion: 1.1.26
-    created: "2026-01-22T11:26:06.323735138Z"
+    created: "2026-01-22T11:51:56.137945501Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 3605070c3d141a7a6380e43a4c3fe4e297b8ba142a6c6c95279a086b5275a18a
     home: https://github.com/troke12/redis-operator
@@ -31,7 +45,7 @@ entries:
     version: 1.1.26
   - apiVersion: v2
     appVersion: 1.1.25
-    created: "2026-01-22T11:26:06.3233284Z"
+    created: "2026-01-22T11:51:56.136646991Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 39280bd634647e49cbdf14fc25d10e606f2ab05314deaeadec6b0f870a55bc6d
     home: https://github.com/troke12/redis-operator
@@ -45,7 +59,7 @@ entries:
     version: 1.1.25
   - apiVersion: v2
     appVersion: 1.1.24
-    created: "2026-01-22T11:26:06.322925974Z"
+    created: "2026-01-22T11:51:56.135274446Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: bc1636ea3c0884d32abbcf292cc898585893c3c55d1d0f9738e03ba7dd82253d
     home: https://github.com/troke12/redis-operator
@@ -59,7 +73,7 @@ entries:
     version: 1.1.24
   - apiVersion: v2
     appVersion: 1.1.23
-    created: "2026-01-22T11:26:06.322520343Z"
+    created: "2026-01-22T11:51:56.134464639Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: ba1d6cff6b86f7f19cca463add9eb09101668ea34221ccf828b5053c36a39faa
     home: https://github.com/troke12/redis-operator
@@ -73,7 +87,7 @@ entries:
     version: 1.1.23
   - apiVersion: v2
     appVersion: 1.1.22
-    created: "2026-01-22T11:26:06.322112798Z"
+    created: "2026-01-22T11:51:56.13374512Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: d4c370df9deb7ee30d31bfe5b72aa1132a2b2363f86949e5fcdf8e746f7039c8
     home: https://github.com/troke12/redis-operator
@@ -87,7 +101,7 @@ entries:
     version: 1.1.22
   - apiVersion: v2
     appVersion: 1.1.21
-    created: "2026-01-22T11:26:06.321682229Z"
+    created: "2026-01-22T11:51:56.13325087Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 48c5976ab8f777ee9000898ee9a58924a3870904c7c58ff357e41838cafe6054
     home: https://github.com/troke12/redis-operator
@@ -101,7 +115,7 @@ entries:
     version: 1.1.21
   - apiVersion: v2
     appVersion: 1.1.20
-    created: "2026-01-22T11:26:06.321259572Z"
+    created: "2026-01-22T11:51:56.132760868Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 9019e2f4b391a69aaec8f96be084b1dc8632a18b2b23f787fdae259bc0c1bb02
     home: https://github.com/troke12/redis-operator
@@ -115,7 +129,7 @@ entries:
     version: 1.1.20
   - apiVersion: v2
     appVersion: 1.1.19
-    created: "2026-01-22T11:26:06.320527294Z"
+    created: "2026-01-22T11:51:56.131956431Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 95c5971f980ac7515c04a3bb527b4b1cbd0798206818398ff675537deba5ccac
     home: https://github.com/troke12/redis-operator
@@ -129,7 +143,7 @@ entries:
     version: 1.1.19
   - apiVersion: v2
     appVersion: 1.1.18
-    created: "2026-01-22T11:26:06.32016763Z"
+    created: "2026-01-22T11:51:56.131542009Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: aa0873c233c0d29aba38011969a44a89dfe0ec80ab16dc2fa944599de009d649
     home: https://github.com/troke12/redis-operator
@@ -143,7 +157,7 @@ entries:
     version: 1.1.18
   - apiVersion: v2
     appVersion: 1.1.17
-    created: "2026-01-22T11:26:06.319829042Z"
+    created: "2026-01-22T11:51:56.13114506Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: dabb14be29710cc9b57fb06a6842bbdce8c09e80cbeb7680d58000b64ace3259
     home: https://github.com/troke12/redis-operator
@@ -157,7 +171,7 @@ entries:
     version: 1.1.17
   - apiVersion: v2
     appVersion: 1.1.16
-    created: "2026-01-22T11:26:06.319479836Z"
+    created: "2026-01-22T11:51:56.130720811Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 038354b62f9a7b7f99f585763c05ed1063628e2b3c18d2d64d9764b409f252f0
     home: https://github.com/troke12/redis-operator
@@ -171,7 +185,7 @@ entries:
     version: 1.1.16
   - apiVersion: v2
     appVersion: 1.1.15
-    created: "2026-01-22T11:26:06.319072694Z"
+    created: "2026-01-22T11:51:56.130317681Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 76fad6232c66bd72dc714952b3a39faec68290bd46b5e4eecf7723220b5673be
     home: https://github.com/troke12/redis-operator
@@ -185,7 +199,7 @@ entries:
     version: 1.1.15
   - apiVersion: v2
     appVersion: 1.1.14
-    created: "2026-01-22T11:26:06.318486052Z"
+    created: "2026-01-22T11:51:56.129889674Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: dd2888d7742a06853370040f2a02b7d4fb65af62c65b5567eab55ea805db3c6a
     home: https://github.com/troke12/redis-operator
@@ -199,7 +213,7 @@ entries:
     version: 1.1.14
   - apiVersion: v2
     appVersion: 1.1.13
-    created: "2026-01-22T11:26:06.317609643Z"
+    created: "2026-01-22T11:51:56.129233492Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 27d9cfb08268ceef9a2d77c79041033c4de6cd102a0cddbf22521c545bf182b7
     home: https://github.com/troke12/redis-operator
@@ -213,7 +227,7 @@ entries:
     version: 1.1.13
   - apiVersion: v2
     appVersion: 1.1.12
-    created: "2026-01-22T11:26:06.317073046Z"
+    created: "2026-01-22T11:51:56.128692606Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: c139dd1b74527eedc874ea63816188e206c91e76f7ecca4393b9060284628f21
     home: https://github.com/troke12/redis-operator
@@ -227,7 +241,7 @@ entries:
     version: 1.1.12
   - apiVersion: v2
     appVersion: 1.1.11
-    created: "2026-01-22T11:26:06.31674337Z"
+    created: "2026-01-22T11:51:56.127394703Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 68599643c8fe3a77fe76270c6610cc2dbfa739792827a2a8c44f5aecdad18104
     home: https://github.com/troke12/redis-operator
@@ -241,7 +255,7 @@ entries:
     version: 1.1.11
   - apiVersion: v2
     appVersion: 1.1.10
-    created: "2026-01-22T11:26:06.316403608Z"
+    created: "2026-01-22T11:51:56.126843798Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: d0c1b4ae1b3b04118fd44742ea8cccb856b79b0735022e6d4c17788b9c40aa74
     home: https://github.com/troke12/redis-operator
@@ -255,7 +269,7 @@ entries:
     version: 1.1.10
   - apiVersion: v2
     appVersion: 1.1.9
-    created: "2026-01-22T11:26:06.327479764Z"
+    created: "2026-01-22T11:51:56.142010216Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 972791300e9138119732e046c3f0369cd95d685efa05ea8f93bbc6b07e927e7e
     home: https://github.com/troke12/redis-operator
@@ -269,7 +283,7 @@ entries:
     version: 1.1.9
   - apiVersion: v2
     appVersion: 1.1.8
-    created: "2026-01-22T11:26:06.327118356Z"
+    created: "2026-01-22T11:51:56.141550811Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 5eaa45f90df5d18d4da2d611f2b6b74383323b91642c7c8c641af45f00e95a7e
     home: https://github.com/troke12/redis-operator
@@ -283,7 +297,7 @@ entries:
     version: 1.1.8
   - apiVersion: v2
     appVersion: 1.1.7
-    created: "2026-01-22T11:26:06.326780301Z"
+    created: "2026-01-22T11:51:56.141149895Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: fc2378532bc2a7711b883f6aba605307ef5a03e0ec323a57d28f22cc9f032754
     home: https://github.com/troke12/redis-operator
@@ -297,7 +311,7 @@ entries:
     version: 1.1.7
   - apiVersion: v2
     appVersion: 1.1.6
-    created: "2026-01-22T11:26:06.326442889Z"
+    created: "2026-01-22T11:51:56.140731056Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: facc25b38817c004c62239edf3c8bea40620db7e397a7f2a658a1e0e94c7e9a0
     home: https://github.com/troke12/redis-operator
@@ -311,7 +325,7 @@ entries:
     version: 1.1.6
   - apiVersion: v2
     appVersion: 1.1.5
-    created: "2026-01-22T11:26:06.326073978Z"
+    created: "2026-01-22T11:51:56.140327134Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 988997ae66b7c7d815168abec0e2603f6d8cac808827237e9bd954402b770066
     home: https://github.com/troke12/redis-operator
@@ -325,7 +339,7 @@ entries:
     version: 1.1.5
   - apiVersion: v2
     appVersion: 1.1.4
-    created: "2026-01-22T11:26:06.325734652Z"
+    created: "2026-01-22T11:51:56.139937599Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 86f1071b7e84f3698d725a149a2bd1c1d89e9c0d7eb8f03b370e343778ccd7db
     home: https://github.com/troke12/redis-operator
@@ -339,7 +353,7 @@ entries:
     version: 1.1.4
   - apiVersion: v2
     appVersion: 1.1.3
-    created: "2026-01-22T11:26:06.325078748Z"
+    created: "2026-01-22T11:51:56.139493753Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 3d272f9b6acf0aca86b07a07b83bfe6c863d48fb6790978c76571da275e3cfc2
     home: https://github.com/troke12/redis-operator
@@ -353,7 +367,7 @@ entries:
     version: 1.1.3
   - apiVersion: v2
     appVersion: 1.1.2
-    created: "2026-01-22T11:26:06.320852243Z"
+    created: "2026-01-22T11:51:56.13232131Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: af0004328f880f340bf7dcd666a18a2c2bf2c159b720b9ea6d8277e5eef12d27
     home: https://github.com/troke12/redis-operator
@@ -367,7 +381,7 @@ entries:
     version: 1.1.2
   - apiVersion: v2
     appVersion: 1.1.1
-    created: "2026-01-22T11:26:06.315991874Z"
+    created: "2026-01-22T11:51:56.126283625Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 2d05e478a78a80dde04bc241f650e9f64daf8cb2a09a4c73abb9669da5190eec
     home: https://github.com/troke12/redis-operator
@@ -381,7 +395,7 @@ entries:
     version: 1.1.1
   - apiVersion: v2
     appVersion: 1.1.0
-    created: "2026-01-22T11:26:06.315598049Z"
+    created: "2026-01-22T11:51:56.125745804Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 40370314b827e39dc4a8e0fc8649b3c2752cd6df6277813fa0af7e77c3f7b011
     home: https://github.com/troke12/redis-operator
@@ -395,7 +409,7 @@ entries:
     version: 1.1.0
   - apiVersion: v2
     appVersion: 1.0.0
-    created: "2026-01-22T11:26:06.314817498Z"
+    created: "2026-01-22T11:51:56.125237157Z"
     description: Helm chart to deploy the Redis Operator and an optional RedisCluster
     digest: 683296e3ab9c8b08904ecf5e9adf71876bd5b7c7edd87d8a7750ab52dccbea7d
     home: https://github.com/troke12/redis-operator
@@ -407,4 +421,4 @@ entries:
     urls:
     - https://troke.id/redis-operator/redis-operator-1.0.0.tgz
     version: 1.0.0
-generated: "2026-01-22T11:26:06.314331246Z"
+generated: "2026-01-22T11:51:56.124595493Z"
