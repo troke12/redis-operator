@@ -208,30 +208,36 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Info("Cluster state after fix and cleanup", "state", clusterState)
 	}
 
-	// Build ready IPs set for quick lookup
+	// Build ready IPs set for quick lookup and log all ready pods
 	readyIPs := make(map[string]bool)
+	var readyIPList []string
 	for _, endpoint := range readyEndpoints {
 		ip := strings.Split(endpoint, ":")[0]
 		readyIPs[ip] = true
+		readyIPList = append(readyIPList, ip)
 	}
 
 	// Build cluster node IPs (excluding handshake/failed nodes)
 	clusterIPs := make(map[string]bool)
 	var healthyClusterNodes []rediscli.NodeInfo
+	var clusterIPList []string
+	var handshakeCount int
 	for _, node := range clusterNodes {
 		nodeIP := strings.Split(node.Addr, ":")[0]
 
 		// Skip nodes in handshake - they're still joining
 		if strings.Contains(node.Flags, "handshake") {
-			logger.Info("Node in handshake, waiting to stabilize", "nodeID", node.ID, "addr", node.Addr)
+			handshakeCount++
+			logger.Info("Node in handshake, waiting to stabilize", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
 			continue
 		}
 
 		clusterIPs[nodeIP] = true
+		clusterIPList = append(clusterIPList, nodeIP)
 		healthyClusterNodes = append(healthyClusterNodes, node)
 	}
 
-	logger.Info("Scale detection", "readyPods", len(readyEndpoints), "healthyClusterNodes", len(healthyClusterNodes))
+	logger.Info("Scale detection", "readyPods", len(readyEndpoints), "readyIPs", readyIPList, "healthyClusterNodes", len(healthyClusterNodes), "clusterIPs", clusterIPList, "handshakeNodes", handshakeCount)
 
 	// CASE 3: Scale up - ONLY if new pods exist and not in cluster
 	// Do this FIRST and EXCLUSIVELY - don't do scale-down in same reconcile
@@ -240,6 +246,7 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		ip := strings.Split(endpoint, ":")[0]
 		if !clusterIPs[ip] {
 			newEndpoints = append(newEndpoints, endpoint)
+			logger.Info("New pod detected not in cluster (reconcile)", "ip", ip, "endpoint", endpoint)
 		}
 	}
 
@@ -820,28 +827,36 @@ func (r *RedisClusterReconciler) checkAndProcessScale(ctx context.Context, rc *r
 		return
 	}
 
-	// Build ready IPs set
+	// Build ready IPs set and log all ready pods
 	readyIPs := make(map[string]bool)
+	var readyIPList []string
 	for _, endpoint := range readyEndpoints {
 		ip := strings.Split(endpoint, ":")[0]
 		readyIPs[ip] = true
+		readyIPList = append(readyIPList, ip)
 	}
+	logger.Info("Ready pods IPs", "count", len(readyIPList), "ips", readyIPList)
 
 	// Build cluster IPs (excluding handshake/failed nodes)
 	clusterIPs := make(map[string]bool)
 	var healthyClusterNodes []rediscli.NodeInfo
+	var clusterIPList []string
+	var handshakeCount int
 	for _, node := range clusterNodes {
 		nodeIP := strings.Split(node.Addr, ":")[0]
 
 		// Skip nodes in handshake - they're still joining, but continue watching
 		if strings.Contains(node.Flags, "handshake") {
-			logger.V(1).Info("Node in handshake, skipping for now", "nodeID", node.ID, "addr", node.Addr)
+			handshakeCount++
+			logger.Info("Node in handshake, skipping for now", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
 			continue
 		}
 
 		clusterIPs[nodeIP] = true
+		clusterIPList = append(clusterIPList, nodeIP)
 		healthyClusterNodes = append(healthyClusterNodes, node)
 	}
+	logger.Info("Cluster node IPs (excluding handshake)", "count", len(clusterIPList), "ips", clusterIPList, "handshakeNodes", handshakeCount)
 
 	// Check for scale-up: new pods not in cluster
 	var newEndpoints []string
@@ -849,6 +864,7 @@ func (r *RedisClusterReconciler) checkAndProcessScale(ctx context.Context, rc *r
 		ip := strings.Split(endpoint, ":")[0]
 		if !clusterIPs[ip] {
 			newEndpoints = append(newEndpoints, endpoint)
+			logger.Info("New pod detected not in cluster", "ip", ip, "endpoint", endpoint)
 		}
 	}
 
