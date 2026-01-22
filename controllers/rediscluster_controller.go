@@ -674,6 +674,9 @@ func isPodReady(pod *corev1.Pod) bool {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Start background scale watcher goroutine
+	go r.startScaleWatcher(context.Background())
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1alpha1.RedisCluster{}).
 		Owns(&appsv1.StatefulSet{}).
@@ -683,6 +686,165 @@ func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findRedisClusterForPod),
 		).
 		Complete(r)
+}
+
+// startScaleWatcher runs a background goroutine that continuously watches for scale events
+func (r *RedisClusterReconciler) startScaleWatcher(ctx context.Context) {
+	logger := r.Log.WithName("scale-watcher")
+	logger.Info("Starting background scale watcher")
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Scale watcher stopped")
+			return
+		case <-ticker.C:
+			// List all RedisCluster resources
+			var redisClusters redisv1alpha1.RedisClusterList
+			if err := r.List(ctx, &redisClusters); err != nil {
+				logger.Error(err, "Failed to list RedisCluster resources")
+				continue
+			}
+
+			// Check each RedisCluster for scale events
+			for _, rc := range redisClusters.Items {
+				r.checkAndProcessScale(ctx, &rc)
+			}
+		}
+	}
+}
+
+// checkAndProcessScale checks a single RedisCluster for scale events and processes them
+func (r *RedisClusterReconciler) checkAndProcessScale(ctx context.Context, rc *redisv1alpha1.RedisCluster) {
+	logger := r.Log.WithName("scale-watcher").WithValues("cluster", rc.Name, "namespace", rc.Namespace)
+
+	// Get target namespace
+	targetNs := rc.Spec.Namespace
+	if targetNs == "" {
+		targetNs = rc.Namespace
+	}
+
+	statefulSetName := rc.Spec.StatefulSetName
+	if statefulSetName == "" {
+		statefulSetName = "redis"
+	}
+
+	// Get StatefulSet
+	statefulSet := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{Name: statefulSetName, Namespace: targetNs}, statefulSet); err != nil {
+		logger.V(1).Info("Failed to get StatefulSet", "error", err)
+		return
+	}
+
+	// Get ready pods
+	readyEndpoints, err := r.getReadyEndpoints(ctx, targetNs, statefulSet)
+	if err != nil {
+		logger.V(1).Info("Failed to get ready endpoints", "error", err)
+		return
+	}
+
+	if len(readyEndpoints) == 0 {
+		logger.V(1).Info("No ready pods yet")
+		return
+	}
+
+	// Get password
+	password, err := r.getPassword(ctx, rc, targetNs)
+	if err != nil {
+		logger.V(1).Info("Failed to get password", "error", err)
+		return
+	}
+
+	// Create runner
+	runner := rediscli.NewRunner(r.Client, r.Clientset, r.RestConfig, targetNs, password)
+	firstEndpoint := readyEndpoints[0]
+
+	// Get cluster nodes
+	clusterNodes, err := runner.ClusterNodes(ctx, firstEndpoint)
+	if err != nil {
+		logger.V(1).Info("Failed to get cluster nodes", "error", err)
+		return
+	}
+
+	if len(clusterNodes) == 0 {
+		logger.V(1).Info("Cluster not initialized yet")
+		return
+	}
+
+	// Build ready IPs set
+	readyIPs := make(map[string]bool)
+	for _, endpoint := range readyEndpoints {
+		ip := strings.Split(endpoint, ":")[0]
+		readyIPs[ip] = true
+	}
+
+	// Build cluster IPs (excluding handshake/failed nodes)
+	clusterIPs := make(map[string]bool)
+	var healthyClusterNodes []rediscli.NodeInfo
+	for _, node := range clusterNodes {
+		nodeIP := strings.Split(node.Addr, ":")[0]
+
+		// Skip nodes in handshake - they're still joining, but continue watching
+		if strings.Contains(node.Flags, "handshake") {
+			logger.V(1).Info("Node in handshake, skipping for now", "nodeID", node.ID, "addr", node.Addr)
+			continue
+		}
+
+		clusterIPs[nodeIP] = true
+		healthyClusterNodes = append(healthyClusterNodes, node)
+	}
+
+	// Check for scale-up: new pods not in cluster
+	var newEndpoints []string
+	for _, endpoint := range readyEndpoints {
+		ip := strings.Split(endpoint, ":")[0]
+		if !clusterIPs[ip] {
+			newEndpoints = append(newEndpoints, endpoint)
+		}
+	}
+
+	if len(newEndpoints) > 0 {
+		logger.Info("Scale-up detected", "newNodes", len(newEndpoints), "endpoints", newEndpoints)
+		if err := r.scaleUp(ctx, logger, runner, rc, firstEndpoint, newEndpoints); err != nil {
+			logger.Error(err, "Scale-up failed, will retry next cycle")
+		} else {
+			logger.Info("Scale-up successful")
+		}
+		// Continue watching after scale-up
+		return
+	}
+
+	// Check for scale-down: cluster nodes without ready pods
+	var nodesToRemove []rediscli.NodeInfo
+	for _, node := range healthyClusterNodes {
+		nodeIP := strings.Split(node.Addr, ":")[0]
+		if !readyIPs[nodeIP] {
+			nodesToRemove = append(nodesToRemove, node)
+		}
+	}
+
+	if len(nodesToRemove) > 0 {
+		logger.Info("Scale-down detected", "nodesToRemove", len(nodesToRemove))
+		if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, rc.Spec.AutoRebalance); err != nil {
+			logger.Error(err, "Scale-down failed, will retry next cycle")
+		} else {
+			logger.Info("Scale-down successful")
+
+			// Cleanup PVCs if enabled
+			if rc.Spec.AutoPvcCleanup {
+				if err := r.cleanupOrphanedPVCs(ctx, logger, rc, targetNs, statefulSetName, nodesToRemove); err != nil {
+					logger.Error(err, "Failed to cleanup PVCs")
+				}
+			}
+		}
+		// Continue watching after scale-down
+		return
+	}
+
+	logger.V(1).Info("No scale operations needed", "readyPods", len(readyEndpoints), "clusterNodes", len(healthyClusterNodes))
 }
 
 // findRedisClusterForPod maps a Pod event to the RedisCluster that manages it
