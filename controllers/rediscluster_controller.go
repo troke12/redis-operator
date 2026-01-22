@@ -143,17 +143,54 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 
 		// If we have slots but cluster is in fail state, try to fix
-		logger.Info("Cluster in fail state but has slots, attempting fix")
+		logger.Info("Cluster in fail state but has slots, attempting fix", "slotsAssigned", slotsAssigned)
 		if err := runner.ClusterFix(ctx, firstEndpoint); err != nil {
 			logger.Info("Fix failed, will try to continue", "error", err)
 		}
 		time.Sleep(2 * time.Second)
+
+		// After fix, forget any nodes that are failed and not in ready pods
+		clusterNodesAfterFix, _ := runner.ClusterNodes(ctx, firstEndpoint)
+		readyIPsForCleanup := make(map[string]bool)
+		for _, endpoint := range readyEndpoints {
+			ip := strings.Split(endpoint, ":")[0]
+			readyIPsForCleanup[ip] = true
+		}
+
+		var failedNodesToForget []string
+		for _, node := range clusterNodesAfterFix {
+			nodeIP := strings.Split(node.Addr, ":")[0]
+			// If node is failed and pod doesn't exist, forget it
+			if strings.Contains(node.Flags, "fail") && !readyIPsForCleanup[nodeIP] {
+				logger.Info("Found failed node to forget", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
+				failedNodesToForget = append(failedNodesToForget, node.ID)
+			}
+		}
+
+		// Forget failed nodes from all healthy nodes
+		if len(failedNodesToForget) > 0 {
+			for _, endpoint := range readyEndpoints {
+				for _, nodeID := range failedNodesToForget {
+					if err := runner.ClusterForget(ctx, endpoint, nodeID); err != nil {
+						logger.V(1).Info("Forget failed (may be ok)", "endpoint", endpoint, "nodeID", nodeID, "error", err)
+					}
+				}
+			}
+			time.Sleep(2 * time.Second)
+
+			// Run fix again after forget
+			if err := runner.ClusterFix(ctx, firstEndpoint); err != nil {
+				logger.Info("Fix after forget failed", "error", err)
+			}
+			time.Sleep(2 * time.Second)
+		}
 
 		// Re-check
 		clusterInfo, _ = runner.ClusterInfo(ctx, firstEndpoint)
 		if clusterInfo != nil {
 			clusterState = clusterInfo["cluster_state"]
 		}
+		logger.Info("Cluster state after fix and cleanup", "state", clusterState)
 	}
 
 	// Build maps for quick lookup
@@ -186,12 +223,15 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		readyIPs[ip] = true
 	}
 
+	logger.Info("Checking for scale-down", "clusterNodes", len(clusterNodes), "readyPods", len(readyEndpoints))
+
 	var nodesToRemove []rediscli.NodeInfo
 	for _, node := range clusterNodes {
 		nodeIP := strings.Split(node.Addr, ":")[0]
 
 		// Skip nodes that are still in ready pods
 		if readyIPs[nodeIP] {
+			logger.V(1).Info("Node still in ready pods, keeping", "nodeID", node.ID, "addr", node.Addr)
 			continue
 		}
 
@@ -201,6 +241,7 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			continue
 		}
 
+		logger.Info("Node marked for removal", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
 		nodesToRemove = append(nodesToRemove, node)
 	}
 
