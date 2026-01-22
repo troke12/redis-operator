@@ -368,6 +368,18 @@ func (r *Runner) CleanupImportingSlots(ctx context.Context, endpoint string) err
 	return r.ClusterFix(ctx, endpoint)
 }
 
+// IsRebalancing checks if cluster is currently rebalancing
+func (r *Runner) IsRebalancing(ctx context.Context, endpoint string) (bool, error) {
+	// Get cluster check to see if slots are being migrated
+	check, err := r.ClusterCheck(ctx, endpoint)
+	if err != nil {
+		return false, fmt.Errorf("cluster check failed: %w", err)
+	}
+
+	// Check for active slot migration
+	return strings.Contains(check, "importing state") || strings.Contains(check, "migrating state"), nil
+}
+
 // ClusterCheck runs cluster check
 func (r *Runner) ClusterCheck(ctx context.Context, endpoint string) (string, error) {
 	podName, err := r.getPodForEndpoint(ctx, endpoint)

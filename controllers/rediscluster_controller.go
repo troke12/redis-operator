@@ -239,6 +239,15 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	logger.Info("Scale detection", "readyPods", len(readyEndpoints), "readyIPs", readyIPList, "healthyClusterNodes", len(healthyClusterNodes), "clusterIPs", clusterIPList, "handshakeNodes", handshakeCount)
 
+	// Check if rebalance is running before attempting any scale operations
+	isRebalancing, err := runner.IsRebalancing(ctx, firstEndpoint)
+	if err != nil {
+		logger.Error(err, "Failed to check rebalance status")
+	} else if isRebalancing {
+		logger.Info("Cluster is currently rebalancing, skipping scale operations until complete")
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	// CASE 3: Scale up - ONLY if new pods exist and not in cluster
 	// Do this FIRST and EXCLUSIVELY - don't do scale-down in same reconcile
 	var newEndpoints []string
@@ -250,7 +259,16 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
+	// Sanity check: if we detect many "new" nodes but ready pods haven't changed much,
+	// this is likely a bad cluster state read, not a legitimate scale-up
 	if len(newEndpoints) > 0 {
+		// If more than half of ready pods are "new", cluster state is likely corrupt
+		if len(newEndpoints) > len(readyEndpoints)/2 && len(healthyClusterNodes) > 0 {
+			logger.Error(fmt.Errorf("detected %d new nodes but only %d healthy cluster nodes - cluster state may be corrupt", len(newEndpoints), len(healthyClusterNodes)),
+				"Suspicious scale-up detection, skipping to avoid corruption")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+
 		logger.Info("Scale-up operation", "newNodes", len(newEndpoints), "newEndpoints", newEndpoints)
 		if err := r.scaleUp(ctx, logger, runner, redisCluster, firstEndpoint, newEndpoints); err != nil {
 			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-up failed: %v", err))
@@ -936,6 +954,15 @@ func (r *RedisClusterReconciler) checkAndProcessScale(ctx context.Context, rc *r
 		healthyClusterNodes = append(healthyClusterNodes, node)
 	}
 	logger.Info("Cluster node IPs (excluding handshake)", "count", len(clusterIPList), "ips", clusterIPList, "handshakeNodes", handshakeCount)
+
+	// Check if rebalance is running before attempting any scale operations
+	isRebalancing, err := runner.IsRebalancing(ctx, firstEndpoint)
+	if err != nil {
+		logger.V(1).Info("Failed to check rebalance status", "error", err)
+	} else if isRebalancing {
+		logger.Info("Cluster is currently rebalancing, skipping scale operations until complete")
+		return
+	}
 
 	// Check for scale-up: new pods not in cluster
 	var newEndpoints []string
