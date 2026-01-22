@@ -194,63 +194,67 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Info("Cluster state after fix and cleanup", "state", clusterState)
 	}
 
-	// Build maps for quick lookup
-	endpointToNodeID := make(map[string]string)
-	nodeIDToEndpoint := make(map[string]string)
-	for _, node := range clusterNodes {
-		endpointToNodeID[node.Addr] = node.ID
-		nodeIDToEndpoint[node.ID] = node.Addr
-	}
-
-	// CASE 3: Scale up - add new nodes
-	var newEndpoints []string
-	for _, endpoint := range readyEndpoints {
-		if _, exists := endpointToNodeID[endpoint]; !exists {
-			newEndpoints = append(newEndpoints, endpoint)
-		}
-	}
-
-	if len(newEndpoints) > 0 {
-		logger.Info("Scale up detected", "newNodes", len(newEndpoints))
-		if err := r.scaleUp(ctx, logger, runner, redisCluster, firstEndpoint, newEndpoints); err != nil {
-			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-up failed: %v", err))
-		}
-	}
-
-	// CASE 4: Scale down - remove nodes that no longer exist
+	// Build ready IPs set for quick lookup
 	readyIPs := make(map[string]bool)
 	for _, endpoint := range readyEndpoints {
 		ip := strings.Split(endpoint, ":")[0]
 		readyIPs[ip] = true
 	}
 
-	logger.Info("Checking for scale-down", "clusterNodes", len(clusterNodes), "readyPods", len(readyEndpoints))
-
-	var nodesToRemove []rediscli.NodeInfo
+	// Build cluster node IPs (excluding handshake/failed nodes)
+	clusterIPs := make(map[string]bool)
+	var healthyClusterNodes []rediscli.NodeInfo
 	for _, node := range clusterNodes {
 		nodeIP := strings.Split(node.Addr, ":")[0]
 
-		// Skip nodes that are still in ready pods
-		if readyIPs[nodeIP] {
-			logger.V(1).Info("Node still in ready pods, keeping", "nodeID", node.ID, "addr", node.Addr)
-			continue
-		}
-
-		// Skip nodes in handshake state - they're still joining
+		// Skip nodes in handshake - they're still joining
 		if strings.Contains(node.Flags, "handshake") {
-			logger.Info("Skipping handshake node", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
+			logger.Info("Node in handshake, waiting to stabilize", "nodeID", node.ID, "addr", node.Addr)
 			continue
 		}
 
-		logger.Info("Node marked for removal", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
-		nodesToRemove = append(nodesToRemove, node)
+		clusterIPs[nodeIP] = true
+		healthyClusterNodes = append(healthyClusterNodes, node)
+	}
+
+	logger.Info("Scale detection", "readyPods", len(readyEndpoints), "healthyClusterNodes", len(healthyClusterNodes))
+
+	// CASE 3: Scale up - ONLY if new pods exist and not in cluster
+	// Do this FIRST and EXCLUSIVELY - don't do scale-down in same reconcile
+	var newEndpoints []string
+	for _, endpoint := range readyEndpoints {
+		ip := strings.Split(endpoint, ":")[0]
+		if !clusterIPs[ip] {
+			newEndpoints = append(newEndpoints, endpoint)
+		}
+	}
+
+	if len(newEndpoints) > 0 {
+		logger.Info("Scale-up operation", "newNodes", len(newEndpoints), "newEndpoints", newEndpoints)
+		if err := r.scaleUp(ctx, logger, runner, redisCluster, firstEndpoint, newEndpoints); err != nil {
+			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-up failed: %v", err))
+		}
+		// Return immediately after scale-up to allow cluster to stabilize
+		// Next reconcile will verify the nodes are properly joined
+		logger.Info("Scale-up complete, requeuing to verify cluster state")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// CASE 4: Scale down - ONLY if cluster has nodes without ready pods
+	// Only run this if NO scale-up is happening
+	var nodesToRemove []rediscli.NodeInfo
+	for _, node := range healthyClusterNodes {
+		nodeIP := strings.Split(node.Addr, ":")[0]
+
+		// If cluster node IP is not in ready pods, mark for removal
+		if !readyIPs[nodeIP] {
+			logger.Info("Node marked for removal", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
+			nodesToRemove = append(nodesToRemove, node)
+		}
 	}
 
 	if len(nodesToRemove) > 0 {
-		logger.Info("Scale down detected", "nodesToRemove", len(nodesToRemove), "totalClusterNodes", len(clusterNodes), "readyPods", len(readyEndpoints))
-		for _, node := range nodesToRemove {
-			logger.Info("Node to remove", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
-		}
+		logger.Info("Scale-down operation", "nodesToRemove", len(nodesToRemove))
 		if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
 			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
 		}
@@ -261,6 +265,10 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				logger.Error(err, "Failed to cleanup PVCs, continuing anyway")
 			}
 		}
+
+		// Return immediately after scale-down
+		logger.Info("Scale-down complete, requeuing to verify cluster state")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Get final cluster state and size
