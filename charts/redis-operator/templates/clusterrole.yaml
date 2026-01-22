@@ -1,0 +1,34 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "redis-operator.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "redis-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+rules:
+  - apiGroups: ["redis.redis-operator.io"]
+    resources: ["redisclusters"]
+    verbs: ["get","list","watch","create","update","patch","delete"]
+  - apiGroups: ["redis.redis-operator.io"]
+    resources: ["redisclusters/status"]
+    verbs: ["get","update","patch"]
+  - apiGroups: ["redis.redis-operator.io"]
+    resources: ["redisclusters/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get","list","watch","create","update","patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get","list","watch","create","update","patch","delete"]
+  - apiGroups: [""]
+    resources: ["pods","pods/log","secrets","events"]
+    verbs: ["get","list","watch","create","update","patch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get","list","watch","create","delete"]
+{{- end }}

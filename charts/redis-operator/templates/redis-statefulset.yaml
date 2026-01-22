@@ -1,0 +1,108 @@
+{{- if .Values.redis.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.redisCluster.statefulSetName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis
+    app.kubernetes.io/name: {{ include "redis-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+spec:
+  serviceName: {{ .Values.redisCluster.serviceName }}
+  replicas: {{ .Values.redis.replicas }}
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - name: config
+          configMap:
+            name: redis-config
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          imagePullPolicy: {{ .Values.redis.imagePullPolicy | default "Always" }}
+          ports:
+            - name: client
+              containerPort: 6379
+            - name: cluster-bus
+              containerPort: 16379
+          volumeMounts:
+            - name: config
+              mountPath: /etc/redis/redis.conf
+              subPath: redis.conf
+            - name: data
+              mountPath: /data
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redisCluster.passwordSecretName }}
+                  key: {{ .Values.redisCluster.passwordSecretKey }}
+                  optional: false
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    LAST_SAVE=$(redis-cli -a "${REDIS_PASSWORD}" LASTSAVE 2>/dev/null)
+                    redis-cli -a "${REDIS_PASSWORD}" BGSAVE 2>/dev/null || true
+                    TIMEOUT=30
+                    while [ $TIMEOUT -gt 0 ]; do
+                      NEW_SAVE=$(redis-cli -a "${REDIS_PASSWORD}" LASTSAVE 2>/dev/null)
+                      if [ "$NEW_SAVE" != "$LAST_SAVE" ]; then
+                        break
+                      fi
+                      sleep 1
+                      TIMEOUT=$((TIMEOUT - 1))
+                    done
+                    sleep 5
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - redis-cli -a "${REDIS_PASSWORD}" ping
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - redis-cli -a "${REDIS_PASSWORD}" ping
+            initialDelaySeconds: 30
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.redis.storage.storageClassName }}
+        storageClassName: {{ .Values.redis.storage.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.storage.size }}
+{{- end }}
+

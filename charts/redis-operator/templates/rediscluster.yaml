@@ -1,0 +1,21 @@
+{{- if .Values.redisCluster.enabled }}
+{{- /* If we deploy Redis infra, everything must live in the release namespace */ -}}
+{{- $ns := ternary .Release.Namespace (default .Release.Namespace .Values.redisCluster.namespace) .Values.redis.enabled }}
+apiVersion: redis.redis-operator.io/v1alpha1
+kind: RedisCluster
+metadata:
+  name: {{ .Values.redisCluster.name }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: {{ include "redis-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.redisCluster.replicas }}
+  minReady: {{ .Values.redisCluster.minReady }}
+  autoRebalance: {{ .Values.redisCluster.autoRebalance }}
+  serviceName: {{ .Values.redisCluster.serviceName }}
+  statefulSetName: {{ .Values.redisCluster.statefulSetName }}
+  passwordSecretRef:
+    name: {{ .Values.redisCluster.passwordSecretName }}
+    key: {{ .Values.redisCluster.passwordSecretKey }}
+{{- end }}

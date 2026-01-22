@@ -1,0 +1,51 @@
+replicaCount: 1
+
+image:
+  repository: troke12/redis-operator
+  tag: latest
+  pullPolicy: Always
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+redis:
+  enabled: true
+  image: troke12/redis-cluster:6.2-alpine
+  imagePullPolicy: Always
+  replicas: 3
+  storage:
+    size: 1Gi
+    storageClassName: "" # set to your StorageClass name to override
+
+redisCluster:
+  enabled: true
+  name: redis-cluster
+  namespace: ""
+  replicas: 3
+  minReady: 3
+  autoRebalance: true
+  serviceName: redis-headless
+  statefulSetName: redis
+  passwordSecretName: redis-auth
+  passwordSecretKey: REDIS_PASSWORD
+  password: "" # optional; if set, a Secret will be created
