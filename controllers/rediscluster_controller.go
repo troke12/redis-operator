@@ -41,6 +41,7 @@ type RedisClusterReconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 
 // Reconcile is the main reconciliation loop
 func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -253,6 +254,13 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
 			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
 		}
+
+		// Cleanup PVCs if enabled
+		if redisCluster.Spec.AutoPvcCleanup {
+			if err := r.cleanupOrphanedPVCs(ctx, logger, redisCluster, targetNs, statefulSetName, nodesToRemove); err != nil {
+				logger.Error(err, "Failed to cleanup PVCs, continuing anyway")
+			}
+		}
 	}
 
 	// Get final cluster state and size
@@ -413,6 +421,77 @@ func (r *RedisClusterReconciler) scaleUp(
 			time.Sleep(2 * time.Second)
 			if retryErr := runner.ClusterRebalance(ctx, existingEndpoint, true); retryErr != nil {
 				logger.Error(retryErr, "Rebalance failed after fix")
+			}
+		}
+	}
+
+	return nil
+}
+
+// cleanupOrphanedPVCs deletes PVCs for removed nodes
+func (r *RedisClusterReconciler) cleanupOrphanedPVCs(
+	ctx context.Context,
+	logger logr.Logger,
+	rc *redisv1alpha1.RedisCluster,
+	namespace string,
+	statefulSetName string,
+	removedNodes []rediscli.NodeInfo,
+) error {
+	if len(removedNodes) == 0 {
+		return nil
+	}
+
+	// Get StatefulSet to find PVC template name
+	statefulSet := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{Name: statefulSetName, Namespace: namespace}, statefulSet); err != nil {
+		return fmt.Errorf("failed to get StatefulSet: %w", err)
+	}
+
+	// List all PVCs for this StatefulSet
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	if err := r.List(ctx, pvcList, client.InNamespace(namespace)); err != nil {
+		return fmt.Errorf("failed to list PVCs: %w", err)
+	}
+
+	// Get list of current pod names (pods that still exist)
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels(statefulSet.Spec.Selector.MatchLabels)); err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	activePods := make(map[string]bool)
+	for _, pod := range podList.Items {
+		activePods[pod.Name] = true
+	}
+
+	// Find and delete orphaned PVCs
+	for _, pvc := range pvcList.Items {
+		// Check if PVC belongs to this StatefulSet
+		// PVC naming pattern: <volumeClaimTemplate>-<statefulset>-<ordinal>
+		// Example: data-redis-0, data-redis-1, etc.
+		if !strings.HasPrefix(pvc.Name, statefulSetName+"-") && !strings.Contains(pvc.Name, "-"+statefulSetName+"-") {
+			continue
+		}
+
+		// Extract pod name from PVC name
+		// For PVC like "data-redis-0", the pod name is "redis-0"
+		var podName string
+		for _, vct := range statefulSet.Spec.VolumeClaimTemplates {
+			prefix := vct.Name + "-" + statefulSetName + "-"
+			if strings.HasPrefix(pvc.Name, prefix) {
+				ordinal := strings.TrimPrefix(pvc.Name, prefix)
+				podName = statefulSetName + "-" + ordinal
+				break
+			}
+		}
+
+		// If pod doesn't exist anymore, delete the PVC
+		if podName != "" && !activePods[podName] {
+			logger.Info("Deleting orphaned PVC", "pvc", pvc.Name, "pod", podName)
+			if err := r.Delete(ctx, &pvc); err != nil {
+				logger.Error(err, "Failed to delete PVC", "pvc", pvc.Name)
+			} else {
+				logger.Info("Successfully deleted PVC", "pvc", pvc.Name)
 			}
 		}
 	}

@@ -27,6 +27,10 @@ type RedisClusterSpec struct {
 	// +optional
 	AutoRebalance bool `json:"autoRebalance,omitempty"`
 
+	// AutoPvcCleanup enables automatic PVC deletion on scale down
+	// +optional
+	AutoPvcCleanup bool `json:"autoPvcCleanup,omitempty"`
+
 	// ServiceName is the headless service name (default: redis-headless)
 	// +optional
 	ServiceName string `json:"serviceName,omitempty"`
