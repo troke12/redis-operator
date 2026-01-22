@@ -481,11 +481,17 @@ func (r *RedisClusterReconciler) scaleUp(
 			_ = runner.ClusterFix(ctx, existingEndpoint)
 			time.Sleep(2 * time.Second)
 			if retryErr := runner.ClusterRebalance(ctx, existingEndpoint, true); retryErr != nil {
-				logger.Error(retryErr, "Rebalance failed after fix")
+				logger.Error(retryErr, "Rebalance failed after fix, continuing anyway")
+				// Don't return error - let cluster stabilize naturally
+			} else {
+				logger.Info("Rebalance successful after fix")
 			}
+		} else {
+			logger.Info("Rebalance successful")
 		}
 	}
 
+	logger.Info("Scale-up completed")
 	return nil
 }
 
@@ -727,8 +733,11 @@ func isPodReady(pod *corev1.Pod) bool {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Start background scale watcher goroutine
-	go r.startScaleWatcher(context.Background())
+	// Register background scale watcher as a runnable
+	// This ensures watcher lifecycle is managed by the manager
+	if err := mgr.Add(&scaleWatcherRunnable{reconciler: r}); err != nil {
+		return err
+	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1alpha1.RedisCluster{}).
@@ -741,26 +750,43 @@ func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// scaleWatcherRunnable is a manager.Runnable that runs the scale watcher
+type scaleWatcherRunnable struct {
+	reconciler *RedisClusterReconciler
+}
+
+// Start implements manager.Runnable
+func (s *scaleWatcherRunnable) Start(ctx context.Context) error {
+	s.reconciler.startScaleWatcher(ctx)
+	return nil
+}
+
 // startScaleWatcher runs a background goroutine that continuously watches for scale events
 func (r *RedisClusterReconciler) startScaleWatcher(ctx context.Context) {
 	logger := r.Log.WithName("scale-watcher")
-	logger.Info("Starting background scale watcher")
+	logger.Info("Background scale watcher started")
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
+	watchCount := 0
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("Scale watcher stopped")
+			logger.Info("Scale watcher stopped", "totalChecks", watchCount)
 			return
 		case <-ticker.C:
+			watchCount++
+			logger.V(1).Info("Watcher tick", "count", watchCount)
+
 			// List all RedisCluster resources
 			var redisClusters redisv1alpha1.RedisClusterList
 			if err := r.List(ctx, &redisClusters); err != nil {
 				logger.Error(err, "Failed to list RedisCluster resources")
 				continue
 			}
+
+			logger.V(1).Info("Checking clusters", "count", len(redisClusters.Items))
 
 			// Check each RedisCluster for scale events
 			for _, rc := range redisClusters.Items {
