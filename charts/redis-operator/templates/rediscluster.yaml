@@ -13,6 +13,7 @@ spec:
   replicas: {{ .Values.redisCluster.replicas }}
   minReady: {{ .Values.redisCluster.minReady }}
   autoRebalance: {{ .Values.redisCluster.autoRebalance }}
+  autoPvcCleanup: {{ .Values.redisCluster.autoPvcCleanup }}
   serviceName: {{ .Values.redisCluster.serviceName }}
   statefulSetName: {{ .Values.redisCluster.statefulSetName }}
   passwordSecretRef:
