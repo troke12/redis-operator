@@ -22,6 +22,11 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	// Build-time variables (set via ldflags)
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
 )
 
 func init() {
@@ -47,7 +52,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	setupLog.Info("Starting redis-operator", "version", "1.1.24", "commit", "HEAD")
+	setupLog.Info("Starting redis-operator", "version", version, "commit", commit, "buildDate", buildDate)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,

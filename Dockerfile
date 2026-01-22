@@ -1,6 +1,11 @@
 # Build the manager binary
 FROM golang:1.21 as builder
 
+# Build arguments for version info
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
 WORKDIR /workspace
 # Copy the Go Modules manifests
 COPY go.mod go.mod
@@ -15,8 +20,10 @@ COPY api/ api/
 COPY controllers/ controllers/
 COPY pkg/ pkg/
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager cmd/manager/main.go
+# Build with version info injected via ldflags
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a \
+    -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+    -o manager cmd/manager/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
