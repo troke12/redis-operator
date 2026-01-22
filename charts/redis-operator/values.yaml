@@ -44,6 +44,7 @@ redisCluster:
   replicas: 3
   minReady: 3
   autoRebalance: true
+  autoPvcCleanup: false  # Set to true to automatically delete PVCs on scale-down
   serviceName: redis-headless
   statefulSetName: redis
   passwordSecretName: redis-auth
