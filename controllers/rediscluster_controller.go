@@ -473,22 +473,37 @@ func (r *RedisClusterReconciler) scaleUp(
 	// Wait for nodes to be recognized
 	time.Sleep(3 * time.Second)
 
-	// Rebalance if enabled
+	// Rebalance if enabled - wrap in defer recover to prevent watcher crash
 	if rc.Spec.AutoRebalance {
-		logger.Info("Rebalancing cluster after scale-up")
-		if err := runner.ClusterRebalance(ctx, existingEndpoint, true); err != nil {
-			logger.Error(err, "Rebalance failed, trying fix first")
-			_ = runner.ClusterFix(ctx, existingEndpoint)
-			time.Sleep(2 * time.Second)
-			if retryErr := runner.ClusterRebalance(ctx, existingEndpoint, true); retryErr != nil {
-				logger.Error(retryErr, "Rebalance failed after fix, continuing anyway")
-				// Don't return error - let cluster stabilize naturally
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error(fmt.Errorf("panic during rebalance: %v", r), "Rebalance panic recovered")
+				}
+			}()
+
+			logger.Info("Rebalancing cluster after scale-up")
+			if err := runner.ClusterRebalance(ctx, existingEndpoint, true); err != nil {
+				logger.Error(err, "Rebalance failed, trying fix first")
+
+				// Try fix with error handling
+				if fixErr := runner.ClusterFix(ctx, existingEndpoint); fixErr != nil {
+					logger.Error(fixErr, "ClusterFix failed, continuing anyway")
+					return
+				}
+
+				time.Sleep(2 * time.Second)
+
+				// Retry rebalance
+				if retryErr := runner.ClusterRebalance(ctx, existingEndpoint, true); retryErr != nil {
+					logger.Error(retryErr, "Rebalance failed after fix, continuing anyway")
+				} else {
+					logger.Info("Rebalance successful after fix")
+				}
 			} else {
-				logger.Info("Rebalance successful after fix")
+				logger.Info("Rebalance successful")
 			}
-		} else {
-			logger.Info("Rebalance successful")
-		}
+		}()
 	}
 
 	logger.Info("Scale-up completed")
@@ -790,7 +805,14 @@ func (r *RedisClusterReconciler) startScaleWatcher(ctx context.Context) {
 
 			// Check each RedisCluster for scale events
 			for _, rc := range redisClusters.Items {
-				r.checkAndProcessScale(ctx, &rc)
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error(fmt.Errorf("panic in checkAndProcessScale: %v", r), "Watcher panic recovered", "cluster", rc.Name)
+						}
+					}()
+					r.checkAndProcessScale(ctx, &rc)
+				}()
 			}
 		}
 	}
