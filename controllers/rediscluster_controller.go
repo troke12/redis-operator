@@ -473,9 +473,19 @@ func (r *RedisClusterReconciler) scaleUp(
 	// Wait for nodes to be recognized
 	time.Sleep(3 * time.Second)
 
-	// Rebalance if enabled - wrap with timeout and recovery
+	// Rebalance if enabled - but only if cluster has >= 3 nodes
+	// Rebalancing with < 3 nodes will always fail
 	if rc.Spec.AutoRebalance {
-		logger.Info("Rebalancing cluster after scale-up")
+		// Get current cluster size after adding nodes
+		currentNodes, err := runner.ClusterNodes(ctx, existingEndpoint)
+		if err != nil {
+			logger.Error(err, "Failed to get cluster nodes for rebalance check")
+		} else if len(currentNodes) < 3 {
+			logger.Info("Skipping rebalance, cluster has less than 3 nodes",
+				"currentNodes", len(currentNodes),
+				"minRequired", 3)
+		} else {
+			logger.Info("Rebalancing cluster after scale-up", "clusterNodes", len(currentNodes))
 
 		// Create timeout context for rebalance operations (30 seconds max)
 		rebalanceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -508,6 +518,7 @@ func (r *RedisClusterReconciler) scaleUp(
 		} else {
 			logger.Info("Rebalance successful")
 		}
+		} // close the else block for >= 3 nodes check
 	}
 
 	logger.Info("Scale-up completed")
