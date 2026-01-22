@@ -487,8 +487,9 @@ func (r *RedisClusterReconciler) scaleUp(
 		} else {
 			logger.Info("Rebalancing cluster after scale-up", "clusterNodes", len(currentNodes))
 
-		// Create timeout context for rebalance operations (30 seconds max)
-		rebalanceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// Create timeout context for rebalance operations (5 minutes max)
+		// Rebalancing can take a long time when migrating thousands of slots
+		rebalanceCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 
 		rebalanceErr := runner.ClusterRebalance(rebalanceCtx, existingEndpoint, true)
@@ -505,8 +506,8 @@ func (r *RedisClusterReconciler) scaleUp(
 				logger.Info("ClusterFix completed, waiting before retry")
 				time.Sleep(2 * time.Second)
 
-				// Retry rebalance with timeout
-				retryCtx, retryCancel := context.WithTimeout(ctx, 30*time.Second)
+				// Retry rebalance with extended timeout
+				retryCtx, retryCancel := context.WithTimeout(ctx, 5*time.Minute)
 				defer retryCancel()
 
 				if retryErr := runner.ClusterRebalance(retryCtx, existingEndpoint, true); retryErr != nil {
@@ -711,7 +712,9 @@ func (r *RedisClusterReconciler) scaleDown(
 	// Rebalance if enabled
 	if autoRebalance && len(remainingMasters) > 0 {
 		logger.Info("Rebalancing after scale-down")
-		_ = runner.ClusterRebalance(ctx, clusterEndpoint, false)
+		rebalanceCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		_ = runner.ClusterRebalance(rebalanceCtx, clusterEndpoint, false)
 	}
 
 	return nil

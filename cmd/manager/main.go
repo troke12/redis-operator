@@ -47,7 +47,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	setupLog.Info("Starting redis-operator", "version", "1.1.23", "commit", "HEAD")
+	setupLog.Info("Starting redis-operator", "version", "1.1.24", "commit", "HEAD")
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
