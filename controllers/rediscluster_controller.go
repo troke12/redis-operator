@@ -150,21 +150,35 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		time.Sleep(2 * time.Second)
 
-		// After fix, forget any nodes that are failed and not in ready pods
+		// After fix, forget any nodes that are failed and have NO pod at all
+		// (not just "not ready", but completely gone - this prevents data loss on pod restarts)
 		clusterNodesAfterFix, _ := runner.ClusterNodes(ctx, firstEndpoint)
-		readyIPsForCleanup := make(map[string]bool)
-		for _, endpoint := range readyEndpoints {
-			ip := strings.Split(endpoint, ":")[0]
-			readyIPsForCleanup[ip] = true
+
+		// Get all pods (including not-ready) to check if they exist
+		var podListForCleanup corev1.PodList
+		allPodIPsForCleanup := make(map[string]bool)
+		if err := r.List(ctx, &podListForCleanup, client.InNamespace(targetNs), client.MatchingLabels{
+			"app": statefulSetName,
+		}); err == nil {
+			for _, pod := range podListForCleanup.Items {
+				if pod.Status.PodIP != "" {
+					allPodIPsForCleanup[pod.Status.PodIP] = true
+				}
+			}
 		}
 
 		var failedNodesToForget []string
 		for _, node := range clusterNodesAfterFix {
 			nodeIP := strings.Split(node.Addr, ":")[0]
-			// If node is failed and pod doesn't exist, forget it
-			if strings.Contains(node.Flags, "fail") && !readyIPsForCleanup[nodeIP] {
-				logger.Info("Found failed node to forget", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
+			// Only forget if node is failed AND pod completely doesn't exist
+			// This allows pods to restart/recover without losing their cluster membership
+			if strings.Contains(node.Flags, "fail") && !allPodIPsForCleanup[nodeIP] {
+				logger.Info("Found failed node with no pod, marking for forget",
+					"nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
 				failedNodesToForget = append(failedNodesToForget, node.ID)
+			} else if strings.Contains(node.Flags, "fail") && allPodIPsForCleanup[nodeIP] {
+				logger.Info("Failed node has pod (may be restarting), skipping forget to preserve data",
+					"nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
 			}
 		}
 
@@ -240,35 +254,67 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	// CASE 4: Scale down - ONLY if cluster has nodes without ready pods
-	// Only run this if NO scale-up is happening
-	var nodesToRemove []rediscli.NodeInfo
-	for _, node := range healthyClusterNodes {
-		nodeIP := strings.Split(node.Addr, ":")[0]
-
-		// If cluster node IP is not in ready pods, mark for removal
-		if !readyIPs[nodeIP] {
-			logger.Info("Node marked for removal", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
-			nodesToRemove = append(nodesToRemove, node)
-		}
+	// CASE 4: Scale down - ONLY if StatefulSet replicas decreased (intentional scale-down)
+	// This prevents removing nodes when pods are just temporarily down/crashed
+	desiredReplicas := int32(0)
+	if statefulSet.Spec.Replicas != nil {
+		desiredReplicas = *statefulSet.Spec.Replicas
 	}
 
-	if len(nodesToRemove) > 0 {
-		logger.Info("Scale-down operation", "nodesToRemove", len(nodesToRemove))
-		if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
-			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
-		}
-
-		// Cleanup PVCs if enabled
-		if redisCluster.Spec.AutoPvcCleanup {
-			if err := r.cleanupOrphanedPVCs(ctx, logger, redisCluster, targetNs, statefulSetName, nodesToRemove); err != nil {
-				logger.Error(err, "Failed to cleanup PVCs, continuing anyway")
+	// Get all pods (not just ready ones) to check if they exist
+	var podList corev1.PodList
+	if err := r.List(ctx, &podList, client.InNamespace(targetNs), client.MatchingLabels{
+		"app": statefulSetName,
+	}); err != nil {
+		logger.Error(err, "Failed to list pods for scale-down check")
+	} else {
+		// Build set of all pod IPs (including not-ready pods)
+		allPodIPs := make(map[string]bool)
+		for _, pod := range podList.Items {
+			if pod.Status.PodIP != "" {
+				allPodIPs[pod.Status.PodIP] = true
 			}
 		}
 
-		// Return immediately after scale-down
-		logger.Info("Scale-down complete, requeuing to verify cluster state")
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		// Only consider scale-down if:
+		// 1. StatefulSet replicas < number of cluster nodes (intentional scale-down)
+		// 2. Node IP has NO pod at all (not just "not ready", but completely gone)
+		if int32(len(healthyClusterNodes)) > desiredReplicas {
+			var nodesToRemove []rediscli.NodeInfo
+			for _, node := range healthyClusterNodes {
+				nodeIP := strings.Split(node.Addr, ":")[0]
+
+				// Only mark for removal if pod doesn't exist at all
+				if !allPodIPs[nodeIP] {
+					logger.Info("Node has no pod, marking for removal",
+						"nodeID", node.ID, "addr", node.Addr, "role", node.Role,
+						"desiredReplicas", desiredReplicas, "clusterNodes", len(healthyClusterNodes))
+					nodesToRemove = append(nodesToRemove, node)
+				}
+			}
+
+			if len(nodesToRemove) > 0 {
+				logger.Info("Intentional scale-down operation",
+					"nodesToRemove", len(nodesToRemove),
+					"desiredReplicas", desiredReplicas,
+					"currentClusterNodes", len(healthyClusterNodes))
+
+				if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
+					return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
+				}
+
+				// Cleanup PVCs if enabled
+				if redisCluster.Spec.AutoPvcCleanup {
+					if err := r.cleanupOrphanedPVCs(ctx, logger, redisCluster, targetNs, statefulSetName, nodesToRemove); err != nil {
+						logger.Error(err, "Failed to cleanup PVCs, continuing anyway")
+					}
+				}
+
+				// Return immediately after scale-down
+				logger.Info("Scale-down complete, requeuing to verify cluster state")
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+		}
 	}
 
 	// Get final cluster state and size
@@ -817,31 +863,76 @@ func (r *RedisClusterReconciler) checkAndProcessScale(ctx context.Context, rc *r
 		return
 	}
 
-	// Check for scale-down: cluster nodes without ready pods
-	var nodesToRemove []rediscli.NodeInfo
-	for _, node := range healthyClusterNodes {
-		nodeIP := strings.Split(node.Addr, ":")[0]
-		if !readyIPs[nodeIP] {
-			nodesToRemove = append(nodesToRemove, node)
+	// Check for scale-down: ONLY if StatefulSet replicas decreased (intentional scale-down)
+	// This prevents removing nodes when pods are just temporarily down/crashed
+	desiredReplicas := int32(0)
+	if statefulSet.Spec.Replicas != nil {
+		desiredReplicas = *statefulSet.Spec.Replicas
+	}
+
+	// Get all pods (not just ready ones) to check if they exist
+	var podList corev1.PodList
+	if err := r.List(ctx, &podList, client.InNamespace(targetNs), client.MatchingLabels{
+		"app": statefulSetName,
+	}); err != nil {
+		logger.V(1).Info("Failed to list pods", "error", err)
+		return
+	}
+
+	// Build set of all pod IPs (including not-ready pods)
+	allPodIPs := make(map[string]bool)
+	for _, pod := range podList.Items {
+		if pod.Status.PodIP != "" {
+			allPodIPs[pod.Status.PodIP] = true
 		}
 	}
 
-	if len(nodesToRemove) > 0 {
-		logger.Info("Scale-down detected", "nodesToRemove", len(nodesToRemove))
-		if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, rc.Spec.AutoRebalance); err != nil {
-			logger.Error(err, "Scale-down failed, will retry next cycle")
-		} else {
-			logger.Info("Scale-down successful")
+	// Only consider scale-down if:
+	// 1. StatefulSet replicas < number of cluster nodes (intentional scale-down)
+	// 2. Node IP has NO pod at all (not just "not ready", but completely gone)
+	if int32(len(healthyClusterNodes)) > desiredReplicas {
+		var nodesToRemove []rediscli.NodeInfo
+		for _, node := range healthyClusterNodes {
+			nodeIP := strings.Split(node.Addr, ":")[0]
 
-			// Cleanup PVCs if enabled
-			if rc.Spec.AutoPvcCleanup {
-				if err := r.cleanupOrphanedPVCs(ctx, logger, rc, targetNs, statefulSetName, nodesToRemove); err != nil {
-					logger.Error(err, "Failed to cleanup PVCs")
-				}
+			// Only mark for removal if:
+			// 1. Pod doesn't exist at all (not in allPodIPs)
+			// 2. OR pod is terminating/being deleted
+			if !allPodIPs[nodeIP] {
+				logger.Info("Node has no pod, marking for removal",
+					"nodeID", node.ID, "addr", node.Addr, "desiredReplicas", desiredReplicas, "clusterNodes", len(healthyClusterNodes))
+				nodesToRemove = append(nodesToRemove, node)
 			}
 		}
-		// Continue watching after scale-down
-		return
+
+		if len(nodesToRemove) > 0 {
+			logger.Info("Intentional scale-down detected",
+				"nodesToRemove", len(nodesToRemove),
+				"desiredReplicas", desiredReplicas,
+				"currentClusterNodes", len(healthyClusterNodes))
+
+			if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, rc.Spec.AutoRebalance); err != nil {
+				logger.Error(err, "Scale-down failed, will retry next cycle")
+			} else {
+				logger.Info("Scale-down successful")
+
+				// Cleanup PVCs if enabled
+				if rc.Spec.AutoPvcCleanup {
+					if err := r.cleanupOrphanedPVCs(ctx, logger, rc, targetNs, statefulSetName, nodesToRemove); err != nil {
+						logger.Error(err, "Failed to cleanup PVCs")
+					}
+				}
+			}
+			// Continue watching after scale-down
+			return
+		}
+	} else if int32(len(healthyClusterNodes)) < desiredReplicas {
+		// Cluster nodes < desired replicas, but we already handled scale-up above
+		// This means some pods might be starting up, just log and continue watching
+		logger.V(1).Info("Waiting for pods to join cluster",
+			"desiredReplicas", desiredReplicas,
+			"currentClusterNodes", len(healthyClusterNodes),
+			"readyPods", len(readyEndpoints))
 	}
 
 	logger.V(1).Info("No scale operations needed", "readyPods", len(readyEndpoints), "clusterNodes", len(healthyClusterNodes))
