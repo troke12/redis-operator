@@ -7,31 +7,21 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Package Helm chart
+      - name: Validate tag format
         run: |
           TAG="${GITHUB_REF_NAME}"
 
@@ -46,54 +36,53 @@ jobs:
             echo "Derived VERSION is empty from tag '${TAG}'. Aborting."
             exit 1
           fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "Using chart version=${VERSION}, appVersion=${VERSION}"
 
-          # Create output directory
-          mkdir -p _site
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Copy documentation files from docs/ folder
-          cp -r docs/* _site/
+      - name: Checkout gh-pages branch
+        run: |
+          git checkout gh-pages
 
-          # Download existing index.yaml from GitHub Pages to preserve chart history
-          curl -sL http://troke.id/redis-operator/index.yaml -o _site/index.yaml 2>/dev/null || touch _site/index.yaml
+      - name: Package new Helm chart
+        run: |
+          # Switch back to the tagged commit to get chart files
+          git checkout ${GITHUB_REF_NAME} -- charts/
 
-          # Download existing chart packages to preserve them
-          if [[ -s _site/index.yaml ]]; then
-            echo "Downloading existing chart packages..."
-            grep -oP 'redis-operator-[0-9]+\.[0-9]+\.[0-9]+\.tgz' _site/index.yaml | sort -u | while read filename; do
-              if [[ ! -f "_site/$filename" ]]; then
-                echo "Downloading $filename..."
-                curl -sL "http://troke.id/redis-operator/$filename" -o "_site/$filename" || echo "Failed to download $filename"
-              fi
-            done
-          fi
-
-          # Bump Chart.yaml for this package (not committed)
+          # Bump Chart.yaml for this package
           sed -i -E "s/^version: .*/version: ${VERSION}/" charts/redis-operator/Chart.yaml
           sed -i -E "s/^appVersion: .*/appVersion: \"${VERSION}\"/" charts/redis-operator/Chart.yaml
 
           # Set image tag in values.yaml to match Docker image tag (no leading "v")
           sed -i -E "s/^  tag: .*/  tag: ${VERSION}/" charts/redis-operator/values.yaml
 
-          # Copy repo README into chart so it is bundled in the .tgz
+          # Copy README into chart
+          git checkout ${GITHUB_REF_NAME} -- README.md
           cp README.md charts/redis-operator/README.md
 
-          # Package the chart
-          helm package charts/redis-operator --destination _site
+          # Package the chart to current directory (gh-pages root)
+          helm package charts/redis-operator --destination .
 
-          # Rebuild index.yaml from all .tgz files in _site
-          helm repo index _site --url http://troke.id/redis-operator
+          # Clean up temporary files
+          rm -rf charts/ README.md
 
-          echo "=== Published charts ==="
-          ls -la _site/*.tgz 2>/dev/null || echo "No charts found"
-          echo "=== index.yaml content ==="
-          cat _site/index.yaml
+          echo "=== New chart packaged ==="
+          ls -la redis-operator-${VERSION}.tgz
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
+      - name: Update Helm repository index
+        run: |
+          # Rebuild index.yaml with all .tgz files
+          helm repo index . --url https://troke.id/redis-operator
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          echo "=== Updated index.yaml ==="
+          cat index.yaml
+
+      - name: Commit and push to gh-pages
+        run: |
+          git add redis-operator-${VERSION}.tgz index.yaml
+          git commit -m "Release Helm chart version ${VERSION}"
+          git push origin gh-pages
