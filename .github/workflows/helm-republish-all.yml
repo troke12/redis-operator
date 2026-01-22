@@ -1,0 +1,112 @@
+name: Republish All Helm Charts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Package all chart versions
+        run: |
+          # Create temporary directory for packaged charts
+          mkdir -p /tmp/charts
+
+          # Define all versions to republish
+          VERSIONS=(
+            "1.0.0"
+            "1.1.1" "1.1.2" "1.1.3" "1.1.4" "1.1.5"
+            "1.1.6" "1.1.7" "1.1.8" "1.1.9" "1.1.10"
+            "1.1.11" "1.1.12" "1.1.13" "1.1.14" "1.1.15"
+            "1.1.16"
+          )
+
+          echo "=== Packaging ${#VERSIONS[@]} chart versions ==="
+
+          for VERSION in "${VERSIONS[@]}"; do
+            echo ""
+            echo ">>> Processing version ${VERSION}..."
+
+            # Checkout the tag
+            if ! git checkout "v${VERSION}" 2>/dev/null; then
+              echo "WARNING: Tag v${VERSION} not found, skipping..."
+              continue
+            fi
+
+            # Verify chart directory exists
+            if [ ! -d "charts/redis-operator" ]; then
+              echo "WARNING: charts/redis-operator not found at tag v${VERSION}, skipping..."
+              continue
+            fi
+
+            # Update Chart.yaml
+            sed -i -E "s/^version: .*/version: ${VERSION}/" charts/redis-operator/Chart.yaml
+            sed -i -E "s/^appVersion: .*/appVersion: \"${VERSION}\"/" charts/redis-operator/Chart.yaml
+
+            # Update values.yaml image tag
+            sed -i -E "s/^  tag: .*/  tag: ${VERSION}/" charts/redis-operator/values.yaml
+
+            # Copy README into chart
+            if [ -f "README.md" ]; then
+              cp README.md charts/redis-operator/README.md
+            fi
+
+            # Package chart
+            helm package charts/redis-operator --destination /tmp/charts
+
+            echo "✓ Packaged redis-operator-${VERSION}.tgz"
+          done
+
+          echo ""
+          echo "=== Packaged charts ==="
+          ls -lh /tmp/charts/
+
+      - name: Checkout gh-pages and add charts
+        run: |
+          # Checkout gh-pages branch
+          git checkout gh-pages
+
+          # Copy all packaged charts
+          cp /tmp/charts/*.tgz .
+
+          echo "=== Charts in gh-pages ==="
+          ls -lh *.tgz
+
+      - name: Update Helm repository index
+        run: |
+          # Rebuild index.yaml from all .tgz files
+          if [ -f index.yaml ]; then
+            helm repo index . --url https://troke.id/redis-operator --merge index.yaml
+          else
+            helm repo index . --url https://troke.id/redis-operator
+          fi
+
+          echo "=== Generated index.yaml ==="
+          echo "Total chart versions: $(grep -c 'version:' index.yaml)"
+          echo ""
+          grep 'version:' index.yaml
+
+      - name: Commit and push to gh-pages
+        run: |
+          git add *.tgz index.yaml
+          git commit -m "Republish all Helm charts (1.0.0 - 1.1.16)"
+          git push origin gh-pages
+
+          echo ""
+          echo "✓ Successfully republished all charts to gh-pages"
