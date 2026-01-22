@@ -75,8 +75,12 @@ jobs:
 
       - name: Update Helm repository index
         run: |
-          # Rebuild index.yaml with all .tgz files
-          helm repo index . --url https://troke.id/redis-operator
+          # Merge with existing index.yaml to preserve chart history
+          if [ -f index.yaml ]; then
+            helm repo index . --url https://troke.id/redis-operator --merge index.yaml
+          else
+            helm repo index . --url https://troke.id/redis-operator
+          fi
 
           echo "=== Updated index.yaml ==="
           cat index.yaml
