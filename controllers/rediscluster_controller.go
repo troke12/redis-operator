@@ -473,37 +473,41 @@ func (r *RedisClusterReconciler) scaleUp(
 	// Wait for nodes to be recognized
 	time.Sleep(3 * time.Second)
 
-	// Rebalance if enabled - wrap in defer recover to prevent watcher crash
+	// Rebalance if enabled - wrap with timeout and recovery
 	if rc.Spec.AutoRebalance {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logger.Error(fmt.Errorf("panic during rebalance: %v", r), "Rebalance panic recovered")
-				}
-			}()
+		logger.Info("Rebalancing cluster after scale-up")
 
-			logger.Info("Rebalancing cluster after scale-up")
-			if err := runner.ClusterRebalance(ctx, existingEndpoint, true); err != nil {
-				logger.Error(err, "Rebalance failed, trying fix first")
+		// Create timeout context for rebalance operations (30 seconds max)
+		rebalanceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
 
-				// Try fix with error handling
-				if fixErr := runner.ClusterFix(ctx, existingEndpoint); fixErr != nil {
-					logger.Error(fixErr, "ClusterFix failed, continuing anyway")
-					return
-				}
+		rebalanceErr := runner.ClusterRebalance(rebalanceCtx, existingEndpoint, true)
+		if rebalanceErr != nil {
+			logger.Error(rebalanceErr, "Rebalance failed, trying fix first")
 
+			// Try fix with timeout
+			fixCtx, fixCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer fixCancel()
+
+			if fixErr := runner.ClusterFix(fixCtx, existingEndpoint); fixErr != nil {
+				logger.Error(fixErr, "ClusterFix failed, skipping retry")
+			} else {
+				logger.Info("ClusterFix completed, waiting before retry")
 				time.Sleep(2 * time.Second)
 
-				// Retry rebalance
-				if retryErr := runner.ClusterRebalance(ctx, existingEndpoint, true); retryErr != nil {
+				// Retry rebalance with timeout
+				retryCtx, retryCancel := context.WithTimeout(ctx, 30*time.Second)
+				defer retryCancel()
+
+				if retryErr := runner.ClusterRebalance(retryCtx, existingEndpoint, true); retryErr != nil {
 					logger.Error(retryErr, "Rebalance failed after fix, continuing anyway")
 				} else {
 					logger.Info("Rebalance successful after fix")
 				}
-			} else {
-				logger.Info("Rebalance successful")
 			}
-		}()
+		} else {
+			logger.Info("Rebalance successful")
+		}
 	}
 
 	logger.Info("Scale-up completed")
