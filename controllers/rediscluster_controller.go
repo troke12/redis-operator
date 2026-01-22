@@ -41,6 +41,7 @@ type RedisClusterReconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 
 // Reconcile is the main reconciliation loop
 func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -193,66 +194,81 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Info("Cluster state after fix and cleanup", "state", clusterState)
 	}
 
-	// Build maps for quick lookup
-	endpointToNodeID := make(map[string]string)
-	nodeIDToEndpoint := make(map[string]string)
-	for _, node := range clusterNodes {
-		endpointToNodeID[node.Addr] = node.ID
-		nodeIDToEndpoint[node.ID] = node.Addr
-	}
-
-	// CASE 3: Scale up - add new nodes
-	var newEndpoints []string
-	for _, endpoint := range readyEndpoints {
-		if _, exists := endpointToNodeID[endpoint]; !exists {
-			newEndpoints = append(newEndpoints, endpoint)
-		}
-	}
-
-	if len(newEndpoints) > 0 {
-		logger.Info("Scale up detected", "newNodes", len(newEndpoints))
-		if err := r.scaleUp(ctx, logger, runner, redisCluster, firstEndpoint, newEndpoints); err != nil {
-			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-up failed: %v", err))
-		}
-	}
-
-	// CASE 4: Scale down - remove nodes that no longer exist
+	// Build ready IPs set for quick lookup
 	readyIPs := make(map[string]bool)
 	for _, endpoint := range readyEndpoints {
 		ip := strings.Split(endpoint, ":")[0]
 		readyIPs[ip] = true
 	}
 
-	logger.Info("Checking for scale-down", "clusterNodes", len(clusterNodes), "readyPods", len(readyEndpoints))
-
-	var nodesToRemove []rediscli.NodeInfo
+	// Build cluster node IPs (excluding handshake/failed nodes)
+	clusterIPs := make(map[string]bool)
+	var healthyClusterNodes []rediscli.NodeInfo
 	for _, node := range clusterNodes {
 		nodeIP := strings.Split(node.Addr, ":")[0]
 
-		// Skip nodes that are still in ready pods
-		if readyIPs[nodeIP] {
-			logger.V(1).Info("Node still in ready pods, keeping", "nodeID", node.ID, "addr", node.Addr)
-			continue
-		}
-
-		// Skip nodes in handshake state - they're still joining
+		// Skip nodes in handshake - they're still joining
 		if strings.Contains(node.Flags, "handshake") {
-			logger.Info("Skipping handshake node", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
+			logger.Info("Node in handshake, waiting to stabilize", "nodeID", node.ID, "addr", node.Addr)
 			continue
 		}
 
-		logger.Info("Node marked for removal", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
-		nodesToRemove = append(nodesToRemove, node)
+		clusterIPs[nodeIP] = true
+		healthyClusterNodes = append(healthyClusterNodes, node)
+	}
+
+	logger.Info("Scale detection", "readyPods", len(readyEndpoints), "healthyClusterNodes", len(healthyClusterNodes))
+
+	// CASE 3: Scale up - ONLY if new pods exist and not in cluster
+	// Do this FIRST and EXCLUSIVELY - don't do scale-down in same reconcile
+	var newEndpoints []string
+	for _, endpoint := range readyEndpoints {
+		ip := strings.Split(endpoint, ":")[0]
+		if !clusterIPs[ip] {
+			newEndpoints = append(newEndpoints, endpoint)
+		}
+	}
+
+	if len(newEndpoints) > 0 {
+		logger.Info("Scale-up operation", "newNodes", len(newEndpoints), "newEndpoints", newEndpoints)
+		if err := r.scaleUp(ctx, logger, runner, redisCluster, firstEndpoint, newEndpoints); err != nil {
+			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-up failed: %v", err))
+		}
+		// Return immediately after scale-up to allow cluster to stabilize
+		// Next reconcile will verify the nodes are properly joined
+		logger.Info("Scale-up complete, requeuing to verify cluster state")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// CASE 4: Scale down - ONLY if cluster has nodes without ready pods
+	// Only run this if NO scale-up is happening
+	var nodesToRemove []rediscli.NodeInfo
+	for _, node := range healthyClusterNodes {
+		nodeIP := strings.Split(node.Addr, ":")[0]
+
+		// If cluster node IP is not in ready pods, mark for removal
+		if !readyIPs[nodeIP] {
+			logger.Info("Node marked for removal", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
+			nodesToRemove = append(nodesToRemove, node)
+		}
 	}
 
 	if len(nodesToRemove) > 0 {
-		logger.Info("Scale down detected", "nodesToRemove", len(nodesToRemove), "totalClusterNodes", len(clusterNodes), "readyPods", len(readyEndpoints))
-		for _, node := range nodesToRemove {
-			logger.Info("Node to remove", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
-		}
+		logger.Info("Scale-down operation", "nodesToRemove", len(nodesToRemove))
 		if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
 			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
 		}
+
+		// Cleanup PVCs if enabled
+		if redisCluster.Spec.AutoPvcCleanup {
+			if err := r.cleanupOrphanedPVCs(ctx, logger, redisCluster, targetNs, statefulSetName, nodesToRemove); err != nil {
+				logger.Error(err, "Failed to cleanup PVCs, continuing anyway")
+			}
+		}
+
+		// Return immediately after scale-down
+		logger.Info("Scale-down complete, requeuing to verify cluster state")
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Get final cluster state and size
@@ -413,6 +429,77 @@ func (r *RedisClusterReconciler) scaleUp(
 			time.Sleep(2 * time.Second)
 			if retryErr := runner.ClusterRebalance(ctx, existingEndpoint, true); retryErr != nil {
 				logger.Error(retryErr, "Rebalance failed after fix")
+			}
+		}
+	}
+
+	return nil
+}
+
+// cleanupOrphanedPVCs deletes PVCs for removed nodes
+func (r *RedisClusterReconciler) cleanupOrphanedPVCs(
+	ctx context.Context,
+	logger logr.Logger,
+	rc *redisv1alpha1.RedisCluster,
+	namespace string,
+	statefulSetName string,
+	removedNodes []rediscli.NodeInfo,
+) error {
+	if len(removedNodes) == 0 {
+		return nil
+	}
+
+	// Get StatefulSet to find PVC template name
+	statefulSet := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{Name: statefulSetName, Namespace: namespace}, statefulSet); err != nil {
+		return fmt.Errorf("failed to get StatefulSet: %w", err)
+	}
+
+	// List all PVCs for this StatefulSet
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	if err := r.List(ctx, pvcList, client.InNamespace(namespace)); err != nil {
+		return fmt.Errorf("failed to list PVCs: %w", err)
+	}
+
+	// Get list of current pod names (pods that still exist)
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels(statefulSet.Spec.Selector.MatchLabels)); err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	activePods := make(map[string]bool)
+	for _, pod := range podList.Items {
+		activePods[pod.Name] = true
+	}
+
+	// Find and delete orphaned PVCs
+	for _, pvc := range pvcList.Items {
+		// Check if PVC belongs to this StatefulSet
+		// PVC naming pattern: <volumeClaimTemplate>-<statefulset>-<ordinal>
+		// Example: data-redis-0, data-redis-1, etc.
+		if !strings.HasPrefix(pvc.Name, statefulSetName+"-") && !strings.Contains(pvc.Name, "-"+statefulSetName+"-") {
+			continue
+		}
+
+		// Extract pod name from PVC name
+		// For PVC like "data-redis-0", the pod name is "redis-0"
+		var podName string
+		for _, vct := range statefulSet.Spec.VolumeClaimTemplates {
+			prefix := vct.Name + "-" + statefulSetName + "-"
+			if strings.HasPrefix(pvc.Name, prefix) {
+				ordinal := strings.TrimPrefix(pvc.Name, prefix)
+				podName = statefulSetName + "-" + ordinal
+				break
+			}
+		}
+
+		// If pod doesn't exist anymore, delete the PVC
+		if podName != "" && !activePods[podName] {
+			logger.Info("Deleting orphaned PVC", "pvc", pvc.Name, "pod", podName)
+			if err := r.Delete(ctx, &pvc); err != nil {
+				logger.Error(err, "Failed to delete PVC", "pvc", pvc.Name)
+			} else {
+				logger.Info("Successfully deleted PVC", "pvc", pvc.Name)
 			}
 		}
 	}

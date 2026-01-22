@@ -1,45 +1,18 @@
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: redis-operator-manager-role
+  name: manager-role
 rules:
 - apiGroups:
-  - redis.redis-operator.io
+  - ""
   resources:
-  - redisclusters
+  - persistentvolumeclaims
   verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - patch
   - delete
-- apiGroups:
-  - redis.redis-operator.io
-  resources:
-  - redisclusters/status
-  verbs:
-  - get
-  - update
-  - patch
-- apiGroups:
-  - redis.redis-operator.io
-  resources:
-  - redisclusters/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - apps
-  resources:
-  - statefulsets
-  verbs:
   - get
   - list
   - watch
-  - create
-  - update
-  - patch
 - apiGroups:
   - ""
   resources:
@@ -51,18 +24,51 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - get
   - list
   - watch
 - apiGroups:
-  - batch
+  - apps
   resources:
-  - jobs
+  - statefulsets
   verbs:
+  - create
   - get
   - list
+  - patch
+  - update
   - watch
+- apiGroups:
+  - redis.redis-operator.io
+  resources:
+  - redisclusters
+  verbs:
   - create
   - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - redis.redis-operator.io
+  resources:
+  - redisclusters/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - redis.redis-operator.io
+  resources:
+  - redisclusters/status
+  verbs:
+  - get
+  - patch
+  - update
