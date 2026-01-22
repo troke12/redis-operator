@@ -189,25 +189,44 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var nodesToRemove []rediscli.NodeInfo
 	for _, node := range clusterNodes {
 		nodeIP := strings.Split(node.Addr, ":")[0]
-		if !readyIPs[nodeIP] {
-			nodesToRemove = append(nodesToRemove, node)
+
+		// Skip nodes that are still in ready pods
+		if readyIPs[nodeIP] {
+			continue
 		}
+
+		// Skip nodes in handshake state - they're still joining
+		if strings.Contains(node.Flags, "handshake") {
+			logger.Info("Skipping handshake node", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
+			continue
+		}
+
+		nodesToRemove = append(nodesToRemove, node)
 	}
 
 	if len(nodesToRemove) > 0 {
-		logger.Info("Scale down detected", "nodesToRemove", len(nodesToRemove))
+		logger.Info("Scale down detected", "nodesToRemove", len(nodesToRemove), "totalClusterNodes", len(clusterNodes), "readyPods", len(readyEndpoints))
+		for _, node := range nodesToRemove {
+			logger.Info("Node to remove", "nodeID", node.ID, "addr", node.Addr, "role", node.Role, "flags", node.Flags)
+		}
 		if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
 			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
 		}
 	}
 
-	// Get final cluster state
+	// Get final cluster state and size
 	clusterInfo, _ = runner.ClusterInfo(ctx, firstEndpoint)
 	if clusterInfo != nil {
 		clusterState = clusterInfo["cluster_state"]
 	}
 
-	return r.updateStatus(ctx, redisCluster, "Ready", clusterState, "")
+	// Update cluster nodes count
+	finalClusterNodes, _ := runner.ClusterNodes(ctx, firstEndpoint)
+	clusterSize := int32(len(finalClusterNodes))
+
+	logger.Info("Reconciliation complete", "clusterState", clusterState, "clusterSize", clusterSize, "readyPods", readyCount)
+
+	return r.updateStatusWithSize(ctx, redisCluster, "Ready", clusterState, "", clusterSize)
 }
 
 // getPassword retrieves the Redis password from the secret
@@ -377,10 +396,14 @@ func (r *RedisClusterReconciler) scaleDown(
 
 	for _, node := range nodesToRemove {
 		removeNodeIDs[node.ID] = true
-		isFailed := strings.Contains(node.Flags, "fail")
+
+		// Check if node is actually failed (not just handshake or noaddr)
+		// Only consider truly failed nodes that are marked with "fail" but not "handshake"
+		isFailed := strings.Contains(node.Flags, "fail") && !strings.Contains(node.Flags, "handshake")
 
 		if node.Role == "master" {
 			if isFailed {
+				logger.Info("Detected failed master for removal", "nodeID", node.ID, "addr", node.Addr, "flags", node.Flags)
 				failedMasters = append(failedMasters, node)
 			} else {
 				mastersToRemove = append(mastersToRemove, node)
@@ -479,10 +502,18 @@ func (r *RedisClusterReconciler) scaleDown(
 
 // updateStatus updates the RedisCluster status
 func (r *RedisClusterReconciler) updateStatus(ctx context.Context, rc *redisv1alpha1.RedisCluster, phase, clusterState, lastError string) (ctrl.Result, error) {
+	return r.updateStatusWithSize(ctx, rc, phase, clusterState, lastError, 0)
+}
+
+// updateStatusWithSize updates the RedisCluster status with cluster size
+func (r *RedisClusterReconciler) updateStatusWithSize(ctx context.Context, rc *redisv1alpha1.RedisCluster, phase, clusterState, lastError string, clusterSize int32) (ctrl.Result, error) {
 	rc.Status.Phase = phase
 	rc.Status.ClusterState = clusterState
 	rc.Status.LastError = lastError
-	if clusterState != "" {
+	if clusterSize > 0 {
+		rc.Status.ClusterNodes = clusterSize
+	} else if clusterState != "" {
+		// Fallback to ready replicas if cluster size not provided
 		rc.Status.ClusterNodes = rc.Status.ReadyReplicas
 	}
 
