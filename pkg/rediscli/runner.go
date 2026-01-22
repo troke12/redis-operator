@@ -351,6 +351,23 @@ func (r *Runner) ClusterFix(ctx context.Context, endpoint string) error {
 	return nil
 }
 
+// CleanupImportingSlots fixes slots stuck in importing/migrating state
+func (r *Runner) CleanupImportingSlots(ctx context.Context, endpoint string) error {
+	// Get cluster check to find open slots
+	check, err := r.ClusterCheck(ctx, endpoint)
+	if err != nil {
+		return fmt.Errorf("cluster check failed: %w", err)
+	}
+
+	// If no warnings about importing/migrating slots, nothing to do
+	if !strings.Contains(check, "importing state") && !strings.Contains(check, "migrating state") {
+		return nil
+	}
+
+	// Run cluster fix to cleanup
+	return r.ClusterFix(ctx, endpoint)
+}
+
 // ClusterCheck runs cluster check
 func (r *Runner) ClusterCheck(ctx context.Context, endpoint string) (string, error) {
 	podName, err := r.getPodForEndpoint(ctx, endpoint)

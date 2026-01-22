@@ -487,38 +487,51 @@ func (r *RedisClusterReconciler) scaleUp(
 		} else {
 			logger.Info("Rebalancing cluster after scale-up", "clusterNodes", len(currentNodes))
 
-		// Create timeout context for rebalance operations (5 minutes max)
-		// Rebalancing can take a long time when migrating thousands of slots
-		rebalanceCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
+			// First, cleanup any open slots from previous failed rebalance
+			logger.Info("Checking for open slots before rebalance")
+			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cleanupCancel()
 
-		rebalanceErr := runner.ClusterRebalance(rebalanceCtx, existingEndpoint, true)
-		if rebalanceErr != nil {
-			logger.Error(rebalanceErr, "Rebalance failed, trying fix first")
-
-			// Try fix with timeout
-			fixCtx, fixCancel := context.WithTimeout(ctx, 10*time.Second)
-			defer fixCancel()
-
-			if fixErr := runner.ClusterFix(fixCtx, existingEndpoint); fixErr != nil {
-				logger.Error(fixErr, "ClusterFix failed, skipping retry")
+			if cleanupErr := runner.CleanupImportingSlots(cleanupCtx, existingEndpoint); cleanupErr != nil {
+				logger.Error(cleanupErr, "Failed to cleanup importing slots, continuing anyway")
 			} else {
-				logger.Info("ClusterFix completed, waiting before retry")
-				time.Sleep(2 * time.Second)
-
-				// Retry rebalance with extended timeout
-				retryCtx, retryCancel := context.WithTimeout(ctx, 5*time.Minute)
-				defer retryCancel()
-
-				if retryErr := runner.ClusterRebalance(retryCtx, existingEndpoint, true); retryErr != nil {
-					logger.Error(retryErr, "Rebalance failed after fix, continuing anyway")
-				} else {
-					logger.Info("Rebalance successful after fix")
-				}
+				logger.Info("Open slots cleanup completed")
 			}
-		} else {
-			logger.Info("Rebalance successful")
-		}
+
+			// Create timeout context for rebalance operations (5 minutes max)
+			// Rebalancing can take a long time when migrating thousands of slots
+			rebalanceCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+
+			logger.Info("Starting rebalance operation")
+			rebalanceErr := runner.ClusterRebalance(rebalanceCtx, existingEndpoint, true)
+			if rebalanceErr != nil {
+				logger.Error(rebalanceErr, "Rebalance failed, trying fix first")
+
+				// Try fix with timeout
+				fixCtx, fixCancel := context.WithTimeout(ctx, 30*time.Second)
+				defer fixCancel()
+
+				if fixErr := runner.ClusterFix(fixCtx, existingEndpoint); fixErr != nil {
+					logger.Error(fixErr, "ClusterFix failed, skipping retry")
+				} else {
+					logger.Info("ClusterFix completed, waiting before retry")
+					time.Sleep(2 * time.Second)
+
+					// Retry rebalance with extended timeout
+					retryCtx, retryCancel := context.WithTimeout(ctx, 5*time.Minute)
+					defer retryCancel()
+
+					logger.Info("Retrying rebalance after fix")
+					if retryErr := runner.ClusterRebalance(retryCtx, existingEndpoint, true); retryErr != nil {
+						logger.Error(retryErr, "Rebalance failed after fix, continuing anyway")
+					} else {
+						logger.Info("Rebalance successful after fix")
+					}
+				}
+			} else {
+				logger.Info("Rebalance successful")
+			}
 		} // close the else block for >= 3 nodes check
 	}
 
