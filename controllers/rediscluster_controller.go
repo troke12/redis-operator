@@ -269,6 +269,22 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	isRebalancing, err := runner.IsRebalancing(ctx, firstEndpoint)
 	if err != nil {
 		logger.Error(err, "Failed to check rebalance status")
+
+		// If cluster check failed, it might be in broken state with open slots
+		// Try to cleanup importing/migrating slots
+		if strings.Contains(err.Error(), "open slots") || strings.Contains(err.Error(), "don't agree") {
+			logger.Info("Cluster appears to have open slots or inconsistent state, attempting cleanup")
+
+			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cleanupCancel()
+
+			if cleanupErr := runner.CleanupImportingSlots(cleanupCtx, firstEndpoint); cleanupErr != nil {
+				logger.Error(cleanupErr, "Failed to cleanup open slots")
+			} else {
+				logger.Info("Open slots cleanup completed, requeuing")
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+		}
 	} else if isRebalancing {
 		logger.Info("Cluster is currently rebalancing, skipping scale operations until complete")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -548,67 +564,19 @@ func (r *RedisClusterReconciler) scaleUp(
 	// Wait for nodes to be recognized
 	time.Sleep(3 * time.Second)
 
-	// Rebalance if enabled - but only if cluster has >= 3 nodes
-	// Rebalancing with < 3 nodes will always fail
-	if rc.Spec.AutoRebalance {
-		// Get current cluster size after adding nodes
-		currentNodes, err := runner.ClusterNodes(ctx, existingEndpoint)
-		if err != nil {
-			logger.Error(err, "Failed to get cluster nodes for rebalance check")
-		} else if len(currentNodes) < 3 {
-			logger.Info("Skipping rebalance, cluster has less than 3 nodes",
-				"currentNodes", len(currentNodes),
-				"minRequired", 3)
-		} else {
-			logger.Info("Rebalancing cluster after scale-up", "clusterNodes", len(currentNodes))
-
-			// First, cleanup any open slots from previous failed rebalance
-			logger.Info("Checking for open slots before rebalance")
-			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cleanupCancel()
-
-			if cleanupErr := runner.CleanupImportingSlots(cleanupCtx, existingEndpoint); cleanupErr != nil {
-				logger.Error(cleanupErr, "Failed to cleanup importing slots, continuing anyway")
-			} else {
-				logger.Info("Open slots cleanup completed")
-			}
-
-			// Create timeout context for rebalance operations (5 minutes max)
-			// Rebalancing can take a long time when migrating thousands of slots
-			rebalanceCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			defer cancel()
-
-			logger.Info("Starting rebalance operation")
-			rebalanceErr := runner.ClusterRebalance(rebalanceCtx, existingEndpoint, true)
-			if rebalanceErr != nil {
-				logger.Error(rebalanceErr, "Rebalance failed, trying fix first")
-
-				// Try fix with timeout
-				fixCtx, fixCancel := context.WithTimeout(ctx, 30*time.Second)
-				defer fixCancel()
-
-				if fixErr := runner.ClusterFix(fixCtx, existingEndpoint); fixErr != nil {
-					logger.Error(fixErr, "ClusterFix failed, skipping retry")
-				} else {
-					logger.Info("ClusterFix completed, waiting before retry")
-					time.Sleep(2 * time.Second)
-
-					// Retry rebalance with extended timeout
-					retryCtx, retryCancel := context.WithTimeout(ctx, 5*time.Minute)
-					defer retryCancel()
-
-					logger.Info("Retrying rebalance after fix")
-					if retryErr := runner.ClusterRebalance(retryCtx, existingEndpoint, true); retryErr != nil {
-						logger.Error(retryErr, "Rebalance failed after fix, continuing anyway")
-					} else {
-						logger.Info("Rebalance successful after fix")
-					}
-				}
-			} else {
-				logger.Info("Rebalance successful")
-			}
-		} // close the else block for >= 3 nodes check
-	}
+	// IMPORTANT: Skip auto-rebalance after scale-up to prevent cluster corruption
+	// Rebalancing during scale-up is problematic because:
+	// 1. Slot migration takes a long time (can timeout after 5 minutes)
+	// 2. Failed rebalance leaves cluster in broken state with open slots
+	// 3. New nodes can safely exist with 0 slots - this is valid Redis cluster state
+	//
+	// Users should manually rebalance after confirming cluster is stable:
+	//   redis-cli --cluster rebalance <node>:6379 -a <password> --cluster-use-empty-masters
+	//
+	// If you really want auto-rebalance, set AutoRebalance: true in RedisCluster spec
+	// But be aware this can cause cluster instability during scale operations
+	logger.Info("Scale-up completed - new nodes added with 0 slots",
+		"note", "Run manual rebalance if you want to redistribute slots to new nodes")
 
 	logger.Info("Scale-up completed")
 	return nil
