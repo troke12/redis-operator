@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HA Modes - Redis Operator</title>
+  <meta name="description" content="High Availability deployment modes for Redis Operator: Cluster, Sentinel, and Standalone">
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128736;</text></svg>">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 32 32" fill="currentColor">
+          <path d="M16 0C7.163 0 0 7.163 0 16s7.163 16 16 16 16-7.163 16-16S24.837 0 16 0zm0 4c6.627 0 12 5.373 12 12s-5.373 12-12 12S4 22.627 4 16 9.373 4 16 4zm-2 6v4h-4v4h4v4h4v-4h4v-4h-4v-4h-4z"/>
+        </svg>
+        Redis Operator
+      </a>
+      <nav class="nav">
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="scaling.html">Scaling</a>
+        <a href="storage.html">Storage</a>
+        <a href="ha-modes.html" class="active">HA Modes</a>
+      </nav>
+      <a href="https://github.com/troke12/redis-operator" class="github-link" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="container">
+    <div class="doc-content">
+      <h1>High Availability Modes</h1>
+      <p class="subtitle">Choose the right HA strategy for your Redis deployment</p>
+
+      <h2>Deployment Modes Overview</h2>
+      <p>Redis Operator supports three deployment modes:</p>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🔷</div>
+          <h3>Cluster Mode</h3>
+          <p><strong>Distributed, sharded, horizontal scaling</strong></p>
+          <p>Best for: &gt; 100k ops/sec, large datasets (TBs)</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🔶</div>
+          <h3>Sentinel Mode</h3>
+          <p><strong>Master-replica with auto-failover</strong></p>
+          <p>Best for: &lt; 100k ops/sec, simpler HA</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🔸</div>
+          <h3>Standalone Mode</h3>
+          <p><strong>Single instance, no HA</strong></p>
+          <p>Best for: Development and testing only</p>
+        </div>
+      </div>
+
+      <h2>Mode Comparison</h2>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Cluster</th>
+              <th>Sentinel</th>
+              <th>Standalone</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>High Availability</strong></td>
+              <td>✅ Yes</td>
+              <td>✅ Yes</td>
+              <td>❌ No</td>
+            </tr>
+            <tr>
+              <td><strong>Auto Failover</strong></td>
+              <td>✅ Yes</td>
+              <td>✅ Yes</td>
+              <td>❌ No</td>
+            </tr>
+            <tr>
+              <td><strong>Data Sharding</strong></td>
+              <td>✅ Yes</td>
+              <td>❌ No</td>
+              <td>❌ No</td>
+            </tr>
+            <tr>
+              <td><strong>Horizontal Scaling</strong></td>
+              <td>✅ Yes</td>
+              <td>❌ No</td>
+              <td>❌ No</td>
+            </tr>
+            <tr>
+              <td><strong>Max Throughput</strong></td>
+              <td>Millions ops/sec</td>
+              <td>&lt; 100k ops/sec</td>
+              <td>Medium</td>
+            </tr>
+            <tr>
+              <td><strong>Memory Limit</strong></td>
+              <td>Distributed (TBs)</td>
+              <td>Single node (GBs)</td>
+              <td>Single node</td>
+            </tr>
+            <tr>
+              <td><strong>Setup Complexity</strong></td>
+              <td>High</td>
+              <td>Medium</td>
+              <td>Low</td>
+            </tr>
+            <tr>
+              <td><strong>Min Pods</strong></td>
+              <td>3 (masters)</td>
+              <td>3 Redis + 3 Sentinel</td>
+              <td>1</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>When to Use Each Mode</h2>
+
+      <h3>✅ Use Cluster Mode When:</h3>
+      <ul>
+        <li>You need to store <strong>more data than fits in one instance</strong></li>
+        <li>You need <strong>horizontal scalability</strong> (add nodes = more capacity)</li>
+        <li>You need <strong>&gt; 100k operations/second</strong> throughput</li>
+        <li>You want data <strong>automatically distributed</strong> across shards</li>
+        <li>Your data can be <strong>partitioned by key</strong> (hash-based sharding)</li>
+        <li>You can handle cluster mode complexity</li>
+      </ul>
+
+      <div class="info-box">
+        <h4>Real-world examples:</h4>
+        <ul>
+          <li>🛒 Large e-commerce platforms (millions of users)</li>
+          <li>📊 Real-time analytics with massive datasets</li>
+          <li>🔑 Session stores for distributed applications</li>
+          <li>⚡ Caching layer for high-traffic websites</li>
+        </ul>
+      </div>
+
+      <h3>✅ Use Sentinel Mode When:</h3>
+      <ul>
+        <li>You need <strong>high availability but NOT sharding</strong></li>
+        <li>Your dataset <strong>fits in a single instance</strong> (&lt; 100 GB)</li>
+        <li>You need <strong>&lt; 100k operations/second</strong></li>
+        <li>You want <strong>simpler setup</strong> than cluster mode</li>
+        <li>You want <strong>automatic failover</strong> without complexity</li>
+        <li>Your application works with master-replica topology</li>
+      </ul>
+
+      <div class="info-box">
+        <h4>Real-world examples:</h4>
+        <ul>
+          <li>🌐 Small to medium web applications</li>
+          <li>🔧 Microservices cache (per-service Redis)</li>
+          <li>💼 Session storage for medium-traffic sites</li>
+          <li>📬 Job queues with moderate throughput</li>
+        </ul>
+      </div>
+
+      <h3>✅ Use Standalone Mode When:</h3>
+      <ul>
+        <li><strong>Development and testing only</strong></li>
+        <li>No HA required</li>
+        <li>Cost optimization (single pod)</li>
+        <li>Temporary/disposable workloads</li>
+      </ul>
+
+      <div class="alert alert-warning">
+        <strong>⚠️ Never use Standalone in production!</strong> No high availability.
+      </div>
+
+      <h2>Configuration Examples</h2>
+
+      <h3>Cluster Mode (Production)</h3>
+      <div class="code-block">
+        <pre><code>redisCluster:
+  enabled: true
+  name: redis-cluster
+  mode: "cluster"              # Cluster mode
+  replicas: 6                  # 3 masters + 3 replicas
+
+  cluster:
+    replicasPerMaster: 1       # 1 replica per master for HA
+    slotDistributionStrategy: "balanced"
+    nodeTimeout: 5000
+    requireFullCoverage: true
+
+  storage:
+    type: "cloud"              # AWS EBS, GCP PD
+    size: "50Gi"
+
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"</code></pre>
+      </div>
+
+      <p><strong>Characteristics:</strong></p>
+      <ul>
+        <li>📦 <strong>Capacity</strong>: 6 nodes × 4GB = 24GB total (distributed)</li>
+        <li>🛡️ <strong>HA</strong>: Can lose up to 3 nodes (one per master-replica pair)</li>
+        <li>⚡ <strong>Throughput</strong>: Millions of ops/sec</li>
+        <li>⏱️ <strong>Latency</strong>: &lt; 1ms typical</li>
+      </ul>
+
+      <h3>Sentinel Mode (Medium Scale)</h3>
+      <div class="code-block">
+        <pre><code>redisCluster:
+  enabled: true
+  name: redis-sentinel
+  mode: "sentinel"             # Sentinel mode
+  replicas: 3                  # 1 master + 2 replicas
+
+  sentinel:
+    enabled: true
+    masterName: "mymaster"
+    quorum: 2                  # 2 Sentinels must agree
+    downAfterMilliseconds: 5000
+    failoverTimeout: 60000
+    sentinelReplicas: 3        # 3 Sentinel instances
+
+  storage:
+    type: "network"            # NFS, Ceph
+    size: "20Gi"
+
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"</code></pre>
+      </div>
+
+      <p><strong>Characteristics:</strong></p>
+      <ul>
+        <li>📦 <strong>Capacity</strong>: 2GB usable (master only)</li>
+        <li>🛡️ <strong>HA</strong>: Auto-failover when master fails</li>
+        <li>⚡ <strong>Throughput</strong>: &lt; 100k ops/sec</li>
+        <li>👥 <strong>Total Pods</strong>: 3 Redis + 3 Sentinel = 6 pods</li>
+      </ul>
+
+      <h3>Standalone Mode (Development)</h3>
+      <div class="code-block">
+        <pre><code>redisCluster:
+  enabled: true
+  name: redis-dev
+  mode: "standalone"           # Standalone mode
+  replicas: 1                  # Single instance
+
+  storage:
+    type: "local"
+    size: "1Gi"
+
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  autoHealing:
+    enabled: false             # Not needed</code></pre>
+      </div>
+
+      <p><strong>Characteristics:</strong></p>
+      <ul>
+        <li>📦 <strong>Capacity</strong>: 512MB usable</li>
+        <li>🛡️ <strong>HA</strong>: None</li>
+        <li>👥 <strong>Total Pods</strong>: 1 pod</li>
+      </ul>
+
+      <h2>Scaling Behavior</h2>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Operation</th>
+              <th>Cluster Mode</th>
+              <th>Sentinel Mode</th>
+              <th>Standalone</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Horizontal Scale-Up</strong></td>
+              <td>✅ Add nodes, rebalance slots</td>
+              <td>➖ Add replicas (read capacity only)</td>
+              <td>❌ Not supported</td>
+            </tr>
+            <tr>
+              <td><strong>Horizontal Scale-Down</strong></td>
+              <td>✅ Remove nodes, rebalance slots</td>
+              <td>➖ Remove replicas</td>
+              <td>❌ Not supported</td>
+            </tr>
+            <tr>
+              <td><strong>Vertical Scaling</strong></td>
+              <td>✅ Increase pod resources</td>
+              <td>✅ Increase pod resources</td>
+              <td>✅ Increase pod resources</td>
+            </tr>
+            <tr>
+              <td><strong>Write Scaling</strong></td>
+              <td>✅ Add masters (shards)</td>
+              <td>❌ Single master only</td>
+              <td>❌ Single instance</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Failover Behavior</h2>
+
+      <h3>Cluster Mode Failover</h3>
+      <div class="info-box">
+        <p><strong>Scenario:</strong> redis-0 (master) fails</p>
+        <ol>
+          <li>Cluster detects failure (5s default)</li>
+          <li>Replica of redis-0 promotes to master <strong>automatically</strong></li>
+          <li>Cluster continues operating (other masters unaffected)</li>
+          <li>When redis-0 recovers, it becomes replica</li>
+        </ol>
+        <p>⏱️ <strong>Downtime:</strong> None (automatic, &lt; 5 seconds)</p>
+        <p>💾 <strong>Data loss:</strong> Minimal (only in-flight writes)</p>
+      </div>
+
+      <h3>Sentinel Mode Failover</h3>
+      <div class="info-box">
+        <p><strong>Scenario:</strong> redis-0 (master) fails</p>
+        <ol>
+          <li>Sentinels detect failure (5s default)</li>
+          <li>Sentinels reach quorum (2 of 3 agree)</li>
+          <li>Sentinel promotes redis-1 to master</li>
+          <li>Sentinel reconfigures redis-2 to follow new master</li>
+          <li>Applications connect to new master via Sentinel</li>
+        </ol>
+        <p>⏱️ <strong>Downtime:</strong> 5-10 seconds (detection + promotion)</p>
+        <p>💾 <strong>Data loss:</strong> Minimal (only in-flight writes)</p>
+      </div>
+
+      <h3>Standalone Mode Failover</h3>
+      <div class="alert alert-danger">
+        <p>❌ <strong>No automatic failover!</strong></p>
+        <p>Manual recovery:</p>
+        <div class="code-block">
+          <pre><code>kubectl delete pod redis-0
+kubectl get pod redis-0 -w  # Wait ~30s</code></pre>
+        </div>
+        <p>⏱️ <strong>Downtime:</strong> 30-60 seconds (manual)</p>
+        <p>💾 <strong>Data loss:</strong> Depends on persistence (AOF/RDB)</p>
+      </div>
+
+      <h2>Slot Distribution (Cluster Mode Only)</h2>
+
+      <h3>Strategy Options</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Description</th>
+              <th>Use Case</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>balanced</code></td>
+              <td>Equal slots per master</td>
+              <td>Default (recommended)</td>
+            </tr>
+            <tr>
+              <td><code>weighted</code></td>
+              <td>Distribute by node capacity</td>
+              <td>Different node sizes</td>
+            </tr>
+            <tr>
+              <td><code>manual</code></td>
+              <td>Specify exact slot ranges</td>
+              <td>Fine-grained control</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Balanced Distribution Example</h3>
+      <div class="code-block">
+        <pre><code>cluster:
+  slotDistributionStrategy: "balanced"
+
+# Result for 3 masters (16,384 total slots):
+# redis-0: 5461 slots (0-5460)
+# redis-1: 5462 slots (5461-10922)
+# redis-2: 5461 slots (10923-16383)</code></pre>
+      </div>
+
+      <h3>Weighted Distribution Example</h3>
+      <div class="code-block">
+        <pre><code>cluster:
+  slotDistributionStrategy: "weighted"
+  nodeWeights:
+    redis-0: 2  # 2x capacity = 50% of slots
+    redis-1: 1  # 1x capacity = 25% of slots
+    redis-2: 1  # 1x capacity = 25% of slots</code></pre>
+      </div>
+
+      <h2>Decision Tree</h2>
+
+      <div class="info-box">
+        <pre><code>Need HA?
+├─ No → <strong>Standalone</strong> (dev only)
+└─ Yes → Need > 100k ops/sec OR > 100GB data?
+    ├─ No → <strong>Sentinel</strong> (simpler HA)
+    └─ Yes → <strong>Cluster</strong> (distributed HA)</code></pre>
+      </div>
+
+      <h2>Quick Comparison Table</h2>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Need</th>
+              <th>Recommended Mode</th>
+              <th>Min Pods</th>
+              <th>Complexity</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Dev/Test only</td>
+              <td><strong>Standalone</strong></td>
+              <td>1</td>
+              <td>Low</td>
+            </tr>
+            <tr>
+              <td>HA + Simple</td>
+              <td><strong>Sentinel</strong></td>
+              <td>6 (3 Redis + 3 Sentinel)</td>
+              <td>Medium</td>
+            </tr>
+            <tr>
+              <td>HA + Sharding</td>
+              <td><strong>Cluster</strong></td>
+              <td>6 (3 masters + 3 replicas)</td>
+              <td>High</td>
+            </tr>
+            <tr>
+              <td>Massive Scale</td>
+              <td><strong>Cluster</strong></td>
+              <td>12+</td>
+              <td>High</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Monitoring HA Status</h2>
+
+      <h3>Check Cluster Mode Status</h3>
+      <div class="code-block">
+        <pre><code># Cluster info
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER INFO
+
+# Cluster nodes
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER NODES
+
+# Slot distribution
+kubectl get rediscluster redis-cluster \
+  -o jsonpath='{.status.slotDistribution}' | jq</code></pre>
+      </div>
+
+      <h3>Check Sentinel Mode Status</h3>
+      <div class="code-block">
+        <pre><code># Sentinel master info
+kubectl exec -it &lt;sentinel-pod&gt; -- \
+  redis-cli -p 26379 SENTINEL MASTER mymaster
+
+# Sentinel replicas
+kubectl exec -it &lt;sentinel-pod&gt; -- \
+  redis-cli -p 26379 SENTINEL REPLICAS mymaster
+
+# Current master
+kubectl get rediscluster redis-sentinel \
+  -o jsonpath='{.status.masterNode}'</code></pre>
+      </div>
+
+      <div class="alert alert-info">
+        <strong>📚 Related Guides:</strong>
+        <ul>
+          <li><a href="scaling.html">Scaling Guide</a> - Scale cluster mode horizontally</li>
+          <li><a href="storage.html">Storage Guide</a> - Configure storage per mode</li>
+          <li><a href="configuration.html">Configuration Reference</a> - All mode options</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>&copy; 2024 Redis Operator. Licensed under Apache 2.0. <a href="https://github.com/troke12/redis-operator">GitHub</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storage Guide - Redis Operator</title>
+  <meta name="description" content="Storage configuration and PersistentVolume management for Redis Operator">
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128736;</text></svg>">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 32 32" fill="currentColor">
+          <path d="M16 0C7.163 0 0 7.163 0 16s7.163 16 16 16 16-7.163 16-16S24.837 0 16 0zm0 4c6.627 0 12 5.373 12 12s-5.373 12-12 12S4 22.627 4 16 9.373 4 16 4zm-2 6v4h-4v4h4v4h4v-4h4v-4h-4v-4h-4z"/>
+        </svg>
+        Redis Operator
+      </a>
+      <nav class="nav">
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="scaling.html">Scaling</a>
+        <a href="storage.html" class="active">Storage</a>
+        <a href="ha-modes.html">HA Modes</a>
+      </nav>
+      <a href="https://github.com/troke12/redis-operator" class="github-link" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="container">
+    <div class="doc-content">
+      <h1>Storage Guide</h1>
+      <p class="subtitle">Handle PersistentVolume issues and configure storage for Redis Operator</p>
+
+      <div class="alert alert-warning">
+        <strong>⚠️ Common Problem:</strong> PersistentVolume stuck on failed Kubernetes node preventing pod rescheduling. This guide shows you how to solve it.
+      </div>
+
+      <h2>The Problem: PV Stuck on Failed Node</h2>
+
+      <h3>Scenario</h3>
+      <p>You have a Redis cluster with persistent storage:</p>
+      <div class="code-block">
+        <pre><code>redis-0 → pvc-redis-0 → pv-xxx (attached to node-1)
+redis-1 → pvc-redis-1 → pv-yyy (attached to node-2)  ← Node fails!
+redis-2 → pvc-redis-2 → pv-zzz (attached to node-3)</code></pre>
+      </div>
+
+      <p><strong>Node-2 fails</strong> (hardware failure, network partition):</p>
+      <ul>
+        <li>❌ <code>redis-1</code> pod cannot run on node-2</li>
+        <li>⏳ Kubernetes tries to reschedule to node-4</li>
+        <li>🚫 BUT: <code>pv-yyy</code> is still attached to dead node-2</li>
+        <li>😱 Pod stuck in <code>Pending</code>: <code>FailedAttachVolume</code></li>
+      </ul>
+
+      <h3>Why This Happens</h3>
+      <div class="info-box">
+        <ul>
+          <li>PersistentVolumes are <strong>attached to specific nodes</strong></li>
+          <li>When node fails, Kubernetes won't auto-detach volumes</li>
+          <li>Volume detachment <strong>requires node to respond</strong></li>
+          <li>Result: Pod cannot start on new node (volume "stuck")</li>
+        </ul>
+      </div>
+
+      <h2>Solution: Storage Recovery Policies</h2>
+
+      <h3>Recovery Policy Options</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Policy</th>
+              <th>Behavior</th>
+              <th>Data Loss Risk</th>
+              <th>Use Case</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>wait</code></td>
+              <td>Manual intervention required</td>
+              <td>None</td>
+              <td>Default (safest)</td>
+            </tr>
+            <tr>
+              <td><code>force-detach</code></td>
+              <td>Auto force detach after timeout</td>
+              <td>Low*</td>
+              <td>Production (network storage)</td>
+            </tr>
+            <tr>
+              <td><code>recreate-pod</code></td>
+              <td>Delete and recreate pod</td>
+              <td>Low*</td>
+              <td>Transient node issues</td>
+            </tr>
+            <tr>
+              <td><code>delete-pvc</code></td>
+              <td>Delete PVC and create new</td>
+              <td><strong>HIGH</strong></td>
+              <td>Last resort only!</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-sm">* Assuming node is actually dead and using network storage</p>
+
+      <h2>Configuration Examples</h2>
+
+      <h3>Option 1: Wait (Safe, Manual Recovery)</h3>
+      <div class="code-block">
+        <pre><code>redisCluster:
+  storage:
+    type: "network"              # Network storage type
+    size: "10Gi"
+    storageClassName: "fast-ssd"
+    recoveryPolicy: "wait"       # Default: wait for manual intervention
+    forceDetachEnabled: false    # Don't auto-detach</code></pre>
+      </div>
+
+      <p><strong>When stuck, operator shows:</strong></p>
+      <div class="code-block">
+        <pre><code>kubectl get rediscluster redis-cluster -o jsonpath='{.status.volumeStatus}'
+{
+  "redis-1": {
+    "stuck": true,
+    "stuckSince": "2024-01-23T10:00:00Z",
+    "message": "Pod scheduled on non-existent node: node-2",
+    "nodeName": "node-2",
+    "pvcName": "pvc-redis-1",
+    "pvName": "pv-yyy"
+  }
+}</code></pre>
+      </div>
+
+      <p><strong>Manual recovery:</strong></p>
+      <div class="code-block">
+        <pre><code># 1. Force delete the VolumeAttachment
+kubectl get volumeattachment | grep pv-yyy
+kubectl delete volumeattachment &lt;va-name&gt;
+
+# 2. Delete the stuck pod
+kubectl delete pod redis-1
+
+# 3. StatefulSet will recreate it on healthy node</code></pre>
+      </div>
+
+      <h3>Option 2: Force Detach (Automated)</h3>
+      <div class="code-block">
+        <pre><code>redisCluster:
+  storage:
+    type: "cloud"                    # AWS EBS, GCP PD, etc.
+    size: "10Gi"
+    recoveryPolicy: "force-detach"   # Auto force detach
+    forceDetachEnabled: true         # REQUIRED!
+    detachTimeout: "5m"              # Wait 5 min before action</code></pre>
+      </div>
+
+      <p><strong>What happens:</strong></p>
+      <ol>
+        <li>Operator detects pod stuck (FailedAttachVolume)</li>
+        <li>Waits <code>detachTimeout</code> (default: 5 minutes)</li>
+        <li>Deletes VolumeAttachment to force detach</li>
+        <li>Deletes stuck pod</li>
+        <li>StatefulSet recreates pod on healthy node</li>
+        <li>Volume attaches to new node successfully</li>
+      </ol>
+
+      <div class="alert alert-info">
+        <strong>✅ Recommended for Production</strong><br>
+        Best for cloud volumes (AWS EBS, GCP PD) and network storage (NFS, Ceph)
+      </div>
+
+      <h3>Option 3: Recreate Pod (Simple)</h3>
+      <div class="code-block">
+        <pre><code>redisCluster:
+  storage:
+    recoveryPolicy: "recreate-pod"
+    detachTimeout: "5m"</code></pre>
+      </div>
+
+      <p>Just deletes the pod and lets StatefulSet recreate it. May still fail if volume is truly stuck.</p>
+
+      <h3>Option 4: Delete PVC (⚠️ Data Loss!)</h3>
+      <div class="code-block">
+        <pre><code>redisCluster:
+  storage:
+    recoveryPolicy: "delete-pvc"
+    detachTimeout: "10m"    # Wait longer before data loss!</code></pre>
+      </div>
+
+      <div class="alert alert-danger">
+        <strong>⚠️ WARNING: THIS DELETES DATA!</strong><br>
+        Only use as last resort when:
+        <ul>
+          <li>Node permanently lost (hardware destroyed)</li>
+          <li>Volume corruption</li>
+          <li>Quick recovery &gt; data preservation</li>
+          <li>Cluster has replicas with the data</li>
+        </ul>
+      </div>
+
+      <h2>Storage Types</h2>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Examples</th>
+              <th>Performance</th>
+              <th>HA Support</th>
+              <th>Best For</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>local</code></td>
+              <td>Local SSDs, NVMe</td>
+              <td>Highest</td>
+              <td>Node-bound</td>
+              <td>Max performance, node-specific</td>
+            </tr>
+            <tr>
+              <td><code>network</code></td>
+              <td>NFS, Ceph, Portworx</td>
+              <td>Medium-High</td>
+              <td>Yes</td>
+              <td>Best for HA (can remount)</td>
+            </tr>
+            <tr>
+              <td><code>cloud</code></td>
+              <td>AWS EBS, GCP PD, Azure Disk</td>
+              <td>Medium</td>
+              <td>Yes</td>
+              <td>Cloud-native deployments</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Production Configuration</h2>
+
+      <div class="code-block">
+        <pre><code>redisCluster:
+  enabled: true
+  name: redis-cluster
+  replicas: 6  # 3 masters + 3 replicas for HA
+
+  # Storage configuration
+  storage:
+    type: "cloud"                    # AWS EBS, GCP PD, Azure Disk
+    size: "50Gi"                     # 50GB per node
+    storageClassName: "fast-ssd"     # Your fast StorageClass
+
+    # Automated recovery
+    recoveryPolicy: "force-detach"   # Auto-recover from node failures
+    forceDetachEnabled: true         # Enable force detach
+    detachTimeout: "5m"              # Wait 5 min before recovery
+    allowVolumeExpansion: true       # Enable volume expansion
+
+  # Auto-healing for unhealthy pods
+  autoHealing:
+    enabled: true
+    healthCheck:
+      interval: "10s"
+      timeout: "5s"
+      failureThreshold: 3
+    restartPolicy:
+      maxRestarts: 3
+      restartInterval: "5m"
+
+  # Resources
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"</code></pre>
+      </div>
+
+      <h2>Monitoring Volume Issues</h2>
+
+      <h3>Check Volume Status</h3>
+      <div class="code-block">
+        <pre><code># Check RedisCluster volume status
+kubectl get rediscluster redis-cluster -o jsonpath='{.status.volumeStatus}' | jq
+
+# Check operator logs for volume issues
+kubectl logs -f deployment/redis-operator | grep volume
+
+# Check pod conditions
+kubectl describe pod redis-1 | grep -A 5 Conditions
+
+# List VolumeAttachments
+kubectl get volumeattachment</code></pre>
+      </div>
+
+      <h3>Example: Stuck Volume Detection</h3>
+      <div class="code-block">
+        <pre><code># Operator logs show:
+INFO Volume attachment check starting
+INFO Pod stuck due to volume attachment pod=redis-1 reason="Node node-2 is not ready"
+INFO Attempting volume recovery pod=redis-1 policy=force-detach stuckDuration=5m12s
+INFO Force detaching volume pod=redis-1 pv=pv-xxx volumeAttachment=va-xxx node=node-2
+INFO Volume force detached successfully pod=redis-1</code></pre>
+      </div>
+
+      <h2>Troubleshooting</h2>
+
+      <h3>Pod Stuck in Pending &gt; 5 minutes</h3>
+      <div class="code-block">
+        <pre><code># Check pod events
+kubectl describe pod redis-1 | grep -A 10 Events
+# Look for: FailedAttachVolume, VolumeNodeAffinity
+
+# Check if node exists
+kubectl get node &lt;node-name&gt;
+
+# Check VolumeAttachment
+kubectl get volumeattachment
+
+# Force detach if needed
+kubectl delete volumeattachment &lt;va-name&gt;</code></pre>
+      </div>
+
+      <h3>Volume Won't Detach</h3>
+      <div class="code-block">
+        <pre><code># Remove finalizers if stuck
+kubectl patch volumeattachment &lt;va-name&gt; \
+  -p '{"metadata":{"finalizers":[]}}' --type=merge
+
+# Then delete
+kubectl delete volumeattachment &lt;va-name&gt;</code></pre>
+      </div>
+
+      <h3>Recovery Attempts Exhausted</h3>
+      <div class="code-block">
+        <pre><code># Check status
+kubectl get rediscluster redis-cluster \
+  -o jsonpath='{.status.volumeStatus.redis-1.detachAttempts}'
+# If = 5: exhausted, manual intervention required
+
+# Manual recovery:
+# 1. Check infrastructure (node, volume, storage)
+# 2. May need to delete PVC (data loss!)</code></pre>
+      </div>
+
+      <h2>Best Practices</h2>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <h3>✅ DO</h3>
+          <ul>
+            <li>Use <strong>network storage</strong> for production HA</li>
+            <li>Enable <code>force-detach</code> with appropriate timeout</li>
+            <li>Set <code>detachTimeout</code> to 5-10 minutes</li>
+            <li>Monitor <code>volumeStatus</code> in CR</li>
+            <li>Test node failures in staging</li>
+          </ul>
+        </div>
+
+        <div class="feature-card">
+          <h3>❌ DON'T</h3>
+          <ul>
+            <li>Use <code>delete-pvc</code> as default policy</li>
+            <li>Set <code>detachTimeout</code> too short (&lt; 2m)</li>
+            <li>Use force-detach without testing</li>
+            <li>Ignore stuck volume warnings</li>
+            <li>Use local storage for HA clusters</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="alert alert-info">
+        <strong>📚 Related Guides:</strong>
+        <ul>
+          <li><a href="scaling.html">Scaling Guide</a> - Handle storage during scale operations</li>
+          <li><a href="ha-modes.html">HA Modes Guide</a> - Choose storage for your HA mode</li>
+          <li><a href="configuration.html">Configuration Reference</a> - All storage options</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>&copy; 2024 Redis Operator. Licensed under Apache 2.0. <a href="https://github.com/troke12/redis-operator">GitHub</a></p>
+  </footer>
+</body>
+</html>

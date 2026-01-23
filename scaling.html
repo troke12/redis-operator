@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scaling Guide - Redis Operator</title>
+  <meta name="description" content="Complete guide for scaling Redis Cluster with Redis Operator">
+  <link rel="stylesheet" href="assets/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128736;</text></svg>">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 32 32" fill="currentColor">
+          <path d="M16 0C7.163 0 0 7.163 0 16s7.163 16 16 16 16-7.163 16-16S24.837 0 16 0zm0 4c6.627 0 12 5.373 12 12s-5.373 12-12 12S4 22.627 4 16 9.373 4 16 4zm-2 6v4h-4v4h4v4h4v-4h4v-4h-4v-4h-4z"/>
+        </svg>
+        Redis Operator
+      </a>
+      <nav class="nav">
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="configuration.html">Configuration</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="scaling.html" class="active">Scaling</a>
+        <a href="storage.html">Storage</a>
+        <a href="ha-modes.html">HA Modes</a>
+      </nav>
+      <a href="https://github.com/troke12/redis-operator" class="github-link" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="container">
+    <div class="doc-content">
+      <h1>Redis Cluster Scaling Guide</h1>
+      <p class="subtitle">Learn how to safely scale your Redis Cluster up and down</p>
+
+      <div class="alert alert-info">
+        <strong>📖 Important:</strong> Auto-rebalance is <strong>DISABLED by default</strong> to prevent cluster corruption. After scaling, you must manually rebalance slots.
+      </div>
+
+      <h2>Quick Start</h2>
+
+      <h3>Scale Up (3 → 6 nodes)</h3>
+      <div class="code-block">
+        <pre><code># 1. Update replicas in values.yaml
+redisCluster:
+  replicas: 6  # Change from 3 to 6
+
+# 2. Apply changes
+helm upgrade redis-operator ./charts/redis-operator -f values.yaml
+
+# 3. Wait for new pods to be ready
+kubectl get pods -w
+
+# 4. Manually rebalance slots
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; \
+  --cluster rebalance redis-0:6379 --cluster-use-empty-masters</code></pre>
+      </div>
+
+      <h3>Scale Down (6 → 3 nodes)</h3>
+      <div class="code-block">
+        <pre><code># 1. Check which nodes to remove
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER NODES
+
+# 2. Remove data from nodes (manual rebalance first!)
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; \
+  --cluster rebalance redis-0:6379 --cluster-use-empty-masters
+
+# 3. Update replicas in values.yaml
+redisCluster:
+  replicas: 3  # Change from 6 to 3
+
+# 4. Apply changes
+helm upgrade redis-operator ./charts/redis-operator -f values.yaml</code></pre>
+      </div>
+
+      <h2>How It Works</h2>
+
+      <h3>The Single Source of Truth</h3>
+      <p>The operator uses <code>redisCluster.replicas</code> as the <strong>single source of truth</strong> for cluster size:</p>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>StatefulSet replicas</strong></td>
+              <td>Auto-synced to match <code>redisCluster.replicas</code></td>
+            </tr>
+            <tr>
+              <td><strong>Redis cluster size</strong></td>
+              <td>Auto-scaled to match <code>redisCluster.replicas</code></td>
+            </tr>
+            <tr>
+              <td><strong>Slot distribution</strong></td>
+              <td>Manual rebalancing required (safety)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Scale-Up Process</h3>
+      <ol>
+        <li><strong>Operator detects</strong> replicas increased (e.g., 3 → 6)</li>
+        <li><strong>StatefulSet synced</strong> to create 3 new pods</li>
+        <li><strong>Pods become ready</strong> (redis-3, redis-4, redis-5)</li>
+        <li><strong>Nodes added ONE AT A TIME</strong> to prevent race conditions</li>
+        <li><strong>New nodes have 0 slots</strong> (valid state, waiting for rebalance)</li>
+        <li><strong>Manual rebalance</strong> distributes slots across all nodes</li>
+      </ol>
+
+      <h3>Scale-Down Process</h3>
+      <ol>
+        <li><strong>Operator detects</strong> replicas decreased (e.g., 6 → 3)</li>
+        <li><strong>Target nodes identified</strong> (highest numbered: redis-5, redis-4, redis-3)</li>
+        <li><strong>Slots removed</strong> from target nodes (if auto-rebalance enabled)</li>
+        <li><strong>Nodes removed</strong> from cluster using CLUSTER FORGET</li>
+        <li><strong>StatefulSet scaled down</strong> to remove pods</li>
+        <li><strong>PVCs optionally deleted</strong> (if autoPvcCleanup enabled)</li>
+      </ol>
+
+      <h2>Why Manual Rebalancing?</h2>
+
+      <div class="alert alert-warning">
+        <strong>⚠️ Auto-rebalance disabled by default</strong> because:
+        <ul>
+          <li>Slot migration takes <strong>5-10 minutes</strong> for production data</li>
+          <li>Timeout can cause <strong>open slots</strong> (cluster fails)</li>
+          <li>Manual control is <strong>safer</strong> for production</li>
+        </ul>
+      </div>
+
+      <h3>How Redis Cluster Actually Works</h3>
+      <div class="info-box">
+        <h4>16,384 Hash Slots</h4>
+        <p>Redis Cluster divides data into 16,384 hash slots:</p>
+        <ul>
+          <li><strong>slot = CRC16(key) mod 16384</strong></li>
+          <li>Each master owns a range of slots</li>
+          <li>Example with 3 masters:
+            <ul>
+              <li>redis-0: slots 0-5460</li>
+              <li>redis-1: slots 5461-10922</li>
+              <li>redis-2: slots 10923-16383</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+
+      <h3>Empty Masters Are OK</h3>
+      <p>According to Redis documentation:</p>
+      <blockquote>
+        "Adding a node is just adding an empty node and then moving some data into it. This is what usually happens when using the <code>redis-cli --cluster add-node</code> command."
+      </blockquote>
+      <p><strong>Nodes with 0 slots are a NORMAL state</strong> when scaling up!</p>
+
+      <h2>Step-by-Step Guides</h2>
+
+      <h3>Safe Scale-Up (3 → 6 nodes)</h3>
+      <div class="code-block">
+        <pre><code># Step 1: Check current state
+kubectl get rediscluster redis-cluster
+# Expected: Ready 3/3
+
+# Step 2: Update values.yaml
+cat &lt;&lt;EOF > custom-values.yaml
+redisCluster:
+  replicas: 6
+  autoRebalance: false  # Keep disabled!
+EOF
+
+# Step 3: Apply changes
+helm upgrade redis-operator ./charts/redis-operator -f custom-values.yaml
+
+# Step 4: Watch pods come up
+kubectl get pods -w
+# Wait until: redis-0, redis-1, redis-2, redis-3, redis-4, redis-5 all Running
+
+# Step 5: Verify cluster sees new nodes
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER NODES
+# Should show 6 nodes, 3 with slots, 3 empty (0 slots)
+
+# Step 6: Manual rebalance (IMPORTANT!)
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; \
+  --cluster rebalance redis-0:6379 --cluster-use-empty-masters
+
+# Step 7: Verify balanced
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER NODES
+# Each master should have ~2730 slots (16384/6)</code></pre>
+      </div>
+
+      <h3>Safe Scale-Down (6 → 3 nodes)</h3>
+      <div class="code-block">
+        <pre><code># Step 1: Identify nodes to remove
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER NODES
+# Will remove: redis-3, redis-4, redis-5 (highest numbered)
+
+# Step 2: Move slots BEFORE scaling
+# Rebalance to consolidate onto redis-0, redis-1, redis-2
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; \
+  --cluster rebalance redis-0:6379
+
+# Step 3: Verify redis-3, redis-4, redis-5 have 0 slots
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER NODES | grep "redis-[345]"
+
+# Step 4: Update values.yaml
+redisCluster:
+  replicas: 3
+
+# Step 5: Apply changes
+helm upgrade redis-operator ./charts/redis-operator -f values.yaml
+
+# Step 6: Operator will:
+#   - Remove redis-3, redis-4, redis-5 from cluster
+#   - Scale down StatefulSet
+#   - Delete pods
+
+# Step 7: Verify final state
+kubectl get pods
+# Should see only: redis-0, redis-1, redis-2
+
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER INFO
+# cluster_state: ok
+# cluster_slots_assigned: 16384</code></pre>
+      </div>
+
+      <h2>Troubleshooting</h2>
+
+      <h3>Cluster stuck in "fail" state</h3>
+      <div class="code-block">
+        <pre><code># Check for open slots (importing/migrating)
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER NODES | grep -E "importing|migrating"
+
+# If found, cleanup open slots
+kubectl exec -it redis-0 -- redis-cli -a &lt;password&gt; CLUSTER SETSLOT &lt;slot&gt; STABLE
+
+# Or let operator auto-recover (will detect and cleanup)</code></pre>
+      </div>
+
+      <h3>Nodes don't agree on cluster state</h3>
+      <div class="code-block">
+        <pre><code># Check each node's view
+for i in 0 1 2 3 4 5; do
+  echo "=== redis-$i ==="
+  kubectl exec -it redis-$i -- redis-cli -a &lt;password&gt; CLUSTER INFO 2>/dev/null | grep cluster_state
+done
+
+# If different, operator will auto-recover by cleaning up open slots</code></pre>
+      </div>
+
+      <h3>PVCs left behind after scale-down</h3>
+      <div class="code-block">
+        <pre><code># Check for orphaned PVCs
+kubectl get pvc | grep redis
+
+# Option 1: Enable auto-cleanup (in values.yaml)
+redisCluster:
+  autoPvcCleanup: true
+
+# Option 2: Manual cleanup
+kubectl delete pvc pvc-redis-3 pvc-redis-4 pvc-redis-5</code></pre>
+      </div>
+
+      <h2>Best Practices</h2>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <h3>✅ DO</h3>
+          <ul>
+            <li>Keep auto-rebalance <strong>disabled</strong> (default)</li>
+            <li>Manually rebalance after scale-up</li>
+            <li>Scale <strong>one operation at a time</strong></li>
+            <li>Wait 5-10 seconds between operations</li>
+            <li>Monitor cluster state during scaling</li>
+          </ul>
+        </div>
+
+        <div class="feature-card">
+          <h3>❌ DON'T</h3>
+          <ul>
+            <li>Enable auto-rebalance in production</li>
+            <li>Scale while cluster is in "fail" state</li>
+            <li>Scale during high traffic periods</li>
+            <li>Scale multiple times rapidly</li>
+            <li>Assume slots auto-distribute</li>
+          </ul>
+        </div>
+      </div>
+
+      <h2>Configuration Reference</h2>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Default</th>
+              <th>Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>replicas</code></td>
+              <td>Number of Redis nodes</td>
+              <td><code>3</code></td>
+              <td>Minimum 3, scale in increments</td>
+            </tr>
+            <tr>
+              <td><code>minReady</code></td>
+              <td>Min pods before operations</td>
+              <td><code>3</code></td>
+              <td>Set to <code>replicas</code> value</td>
+            </tr>
+            <tr>
+              <td><code>autoRebalance</code></td>
+              <td>Auto slot rebalancing</td>
+              <td><code>false</code></td>
+              <td><strong>Keep disabled!</strong></td>
+            </tr>
+            <tr>
+              <td><code>autoPvcCleanup</code></td>
+              <td>Auto delete PVCs on scale-down</td>
+              <td><code>false</code></td>
+              <td>Enable if storage is disposable</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert alert-info">
+        <strong>📚 Related Guides:</strong>
+        <ul>
+          <li><a href="storage.html">Storage Guide</a> - Handle PV issues during scaling</li>
+          <li><a href="ha-modes.html">HA Modes Guide</a> - Choose the right deployment mode</li>
+          <li><a href="configuration.html">Configuration Reference</a> - All configuration options</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>&copy; 2024 Redis Operator. Licensed under Apache 2.0. <a href="https://github.com/troke12/redis-operator">GitHub</a></p>
+  </footer>
+</body>
+</html>
