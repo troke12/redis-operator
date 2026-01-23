@@ -132,6 +132,39 @@ pre code {
   text-decoration: none;
 }
 
+/* Hamburger Menu */
+.hamburger {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  z-index: 1001;
+}
+
+.hamburger span {
+  display: block;
+  width: 24px;
+  height: 2px;
+  background: white;
+  transition: all 0.3s ease;
+  border-radius: 2px;
+}
+
+.hamburger.active span:nth-child(1) {
+  transform: rotate(45deg) translate(5px, 5px);
+}
+
+.hamburger.active span:nth-child(2) {
+  opacity: 0;
+}
+
+.hamburger.active span:nth-child(3) {
+  transform: rotate(-45deg) translate(7px, -6px);
+}
+
 /* Hero */
 .hero {
   background: linear-gradient(135deg, var(--secondary) 0%, #334155 100%);
@@ -552,7 +585,7 @@ tr:hover td {
 
   .header-content {
     padding: 0 1rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .logo {
@@ -564,16 +597,60 @@ tr:hover td {
     height: 28px;
   }
 
+  /* Show hamburger on mobile */
+  .hamburger {
+    display: flex;
+  }
+
+  /* Mobile nav styles */
   .nav {
-    width: 100%;
-    justify-content: space-around;
-    gap: 0.75rem;
-    font-size: 0.85rem;
-    flex-wrap: wrap;
+    position: fixed;
+    top: 0;
+    right: -100%;
+    width: 280px;
+    height: 100vh;
+    background: var(--secondary);
+    flex-direction: column;
+    gap: 0;
+    padding: 80px 0 2rem 0;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.3);
+    transition: right 0.3s ease;
+    overflow-y: auto;
+    z-index: 1000;
+  }
+
+  .nav.active {
+    right: 0;
   }
 
   .nav a {
-    padding: 0.25rem 0;
+    padding: 1rem 1.5rem;
+    font-size: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    width: 100%;
+  }
+
+  .nav a:hover,
+  .nav a.active {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  /* Overlay when menu is open */
+  body.nav-open::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .github-link {
