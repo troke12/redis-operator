@@ -1,3 +1,6 @@
+# ============================================================================
+# Redis Operator Controller Settings
+# ============================================================================
 replicaCount: 1
 
 image:
@@ -28,23 +31,53 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# ============================================================================
+# Redis StatefulSet Infrastructure Settings
+# ============================================================================
+# This creates the underlying Redis StatefulSet and related resources.
+# The operator will manage this StatefulSet according to the RedisCluster spec.
 redis:
   enabled: true
   image: troke12/redis-cluster:6.2-alpine
   imagePullPolicy: Always
+
+  # IMPORTANT: Initial replicas for the StatefulSet.
+  # The operator will automatically sync this with redisCluster.replicas below.
+  # You should generally set this to match redisCluster.replicas for initial deployment.
   replicas: 3
+
   storage:
     size: 1Gi
     storageClassName: "" # set to your StorageClass name to override
 
+# ============================================================================
+# Redis Cluster Settings (CRD)
+# ============================================================================
+# This is the SINGLE SOURCE OF TRUTH for your cluster size.
+# The operator will automatically:
+# 1. Sync the StatefulSet replicas to match this value
+# 2. Add/remove nodes from the Redis cluster to match this value
 redisCluster:
   enabled: true
   name: redis-cluster
   namespace: ""
+
+  # MAIN CLUSTER SIZE CONTROL - Change this to scale your cluster
+  # The operator will automatically handle adding/removing nodes
   replicas: 3
+
+  # Minimum ready pods before cluster operations
   minReady: 3
-  autoRebalance: true
-  autoPvcCleanup: false  # Set to true to automatically delete PVCs on scale-down
+
+  # IMPORTANT: Auto-rebalance is DISABLED by default to prevent cluster corruption.
+  # After scaling, manually rebalance using:
+  #   kubectl exec -it redis-0 -- redis-cli -a <password> \
+  #     --cluster rebalance <node>:6379 --cluster-use-empty-masters
+  autoRebalance: false
+
+  # Enable to automatically delete PVCs when scaling down
+  autoPvcCleanup: false
+
   serviceName: redis-headless
   statefulSetName: redis
   passwordSecretName: redis-auth
