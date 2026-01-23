@@ -23,6 +23,9 @@
         <a href="getting-started.html">Getting Started</a>
         <a href="configuration.html">Configuration</a>
         <a href="architecture.html" class="active">Architecture</a>
+        <a href="scaling.html">Scaling</a>
+        <a href="storage.html">Storage</a>
+        <a href="ha-modes.html">HA Modes</a>
       </nav>
       <a href="https://github.com/troke12/redis-operator" class="github-link" target="_blank">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -318,10 +321,336 @@ kubectl exec -it redis-0 -n redis-operator -- \
 kubectl exec -it redis-0 -n redis-operator -- \
   redis-cli -a $PASSWORD cluster nodes</code></pre>
 
+      <h2>Best Practice Topology</h2>
+      <p>Recommended deployment topologies for different environments and use cases.</p>
+
+      <h3>Production Topology (HA Cluster Mode)</h3>
+      <div class="info-box">
+        <h4>Recommended: 6 nodes (3 masters + 3 replicas)</h4>
+        <pre><code>Topology:
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  Master 0   │  │  Master 1   │  │  Master 2   │
+│ redis-0     │  │ redis-2     │  │ redis-4     │
+│ Slots 0-5k  │  │ Slots 5k-10k│  │ Slots 10k-16k│
+│ Zone A      │  │ Zone B      │  │ Zone C      │
+└─────────────┘  └─────────────┘  └─────────────┘
+      │                │                │
+      │                │                │
+      ▼                ▼                ▼
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  Replica 0  │  │  Replica 1  │  │  Replica 2  │
+│ redis-1     │  │ redis-3     │  │ redis-5     │
+│ Zone B      │  │ Zone C      │  │ Zone A      │
+└─────────────┘  └─────────────┘  └─────────────┘</code></pre>
+      </div>
+
+      <p><strong>Configuration:</strong></p>
+      <pre><code>redisCluster:
+  mode: "cluster"
+  replicas: 6
+
+  cluster:
+    replicasPerMaster: 1
+    slotDistributionStrategy: "balanced"
+    requireFullCoverage: true
+
+  storage:
+    type: "cloud"                # AWS EBS, GCP PD
+    size: "100Gi"
+    storageClassName: "fast-ssd"
+    recoveryPolicy: "force-detach"
+    forceDetachEnabled: true
+
+  resources:
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+    requests:
+      cpu: "2000m"
+      memory: "4Gi"
+
+  autoHealing:
+    enabled: true</code></pre>
+
+      <p><strong>Characteristics:</strong></p>
+      <ul>
+        <li>✅ <strong>High Availability:</strong> Can survive 1 zone failure + 1 pod failure</li>
+        <li>✅ <strong>Horizontal Scaling:</strong> Add nodes to increase capacity</li>
+        <li>✅ <strong>Auto-Failover:</strong> Replicas promote automatically</li>
+        <li>✅ <strong>Sharding:</strong> Data distributed across 3 masters</li>
+        <li>📊 <strong>Capacity:</strong> ~24GB usable (8GB × 3 masters)</li>
+        <li>⚡ <strong>Throughput:</strong> Millions of ops/sec</li>
+      </ul>
+
+      <h3>Medium Scale Topology (Sentinel Mode)</h3>
+      <div class="info-box">
+        <h4>3 Redis nodes + 3 Sentinel instances</h4>
+        <pre><code>Topology:
+┌──────────────────────────────────────┐
+│         Sentinel Layer              │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ │
+│  │Sentinel 0│ │Sentinel 1│ │Sentinel 2│ │
+│  │ Zone A   │ │ Zone B   │ │ Zone C   │ │
+│  └──────────┘ └──────────┘ └──────────┘ │
+└──────────────────────────────────────┘
+              Monitor & Failover
+                      │
+         ┌────────────┼────────────┐
+         │            │            │
+    ┌─────────┐  ┌─────────┐  ┌─────────┐
+    │ Master  │  │Replica 1│  │Replica 2│
+    │ redis-0 │  │ redis-1 │  │ redis-2 │
+    │ Zone A  │  │ Zone B  │  │ Zone C  │
+    └─────────┘  └─────────┘  └─────────┘
+      Writes      Read-only    Read-only</code></pre>
+      </div>
+
+      <p><strong>Configuration:</strong></p>
+      <pre><code>redisCluster:
+  mode: "sentinel"
+  replicas: 3
+
+  sentinel:
+    enabled: true
+    masterName: "mymaster"
+    quorum: 2
+    sentinelReplicas: 3
+
+  storage:
+    type: "network"
+    size: "50Gi"
+
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"</code></pre>
+
+      <p><strong>Characteristics:</strong></p>
+      <ul>
+        <li>✅ <strong>Simpler HA:</strong> Easier than cluster mode</li>
+        <li>✅ <strong>Auto-Failover:</strong> Sentinel manages promotion</li>
+        <li>✅ <strong>Read Scaling:</strong> Read from replicas</li>
+        <li>❌ <strong>No Sharding:</strong> Single master for writes</li>
+        <li>📊 <strong>Capacity:</strong> ~4GB usable (single master)</li>
+        <li>⚡ <strong>Throughput:</strong> &lt; 100k writes/sec</li>
+      </ul>
+
+      <h3>Development Topology (Standalone)</h3>
+      <div class="info-box">
+        <h4>Single Redis instance for development</h4>
+        <pre><code>Topology:
+┌─────────────┐
+│   Redis     │
+│  redis-0    │
+│   1 Pod     │
+└─────────────┘</code></pre>
+      </div>
+
+      <p><strong>Configuration:</strong></p>
+      <pre><code>redisCluster:
+  mode: "standalone"
+  replicas: 1
+
+  storage:
+    type: "local"
+    size: "5Gi"
+
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+  autoHealing:
+    enabled: false</code></pre>
+
+      <p><strong>Characteristics:</strong></p>
+      <ul>
+        <li>❌ <strong>No HA:</strong> Single point of failure</li>
+        <li>✅ <strong>Simple:</strong> Minimal resources</li>
+        <li>✅ <strong>Fast Setup:</strong> Quick to deploy</li>
+        <li>⚠️ <strong>Dev Only:</strong> Never use in production!</li>
+      </ul>
+
+      <h3>Multi-Zone Deployment</h3>
+      <p>For production HA, spread pods across availability zones:</p>
+
+      <pre><code>apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: redis
+            topologyKey: topology.kubernetes.io/zone
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values:
+                - zone-a
+                - zone-b
+                - zone-c</code></pre>
+
+      <p><strong>Benefits:</strong></p>
+      <ul>
+        <li>🛡️ Survives entire zone failure</li>
+        <li>🔄 Masters and replicas in different zones</li>
+        <li>⚡ Low-latency within zones</li>
+        <li>📍 Predictable pod placement</li>
+      </ul>
+
+      <h3>Resource Allocation Best Practices</h3>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Use Case</th>
+              <th>CPU</th>
+              <th>Memory</th>
+              <th>Storage</th>
+              <th>Replicas</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Small (Dev)</strong></td>
+              <td>500m-1 core</td>
+              <td>512Mi-1Gi</td>
+              <td>5Gi</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td><strong>Medium (Staging)</strong></td>
+              <td>1-2 cores</td>
+              <td>2-4Gi</td>
+              <td>20Gi</td>
+              <td>3</td>
+            </tr>
+            <tr>
+              <td><strong>Large (Production)</strong></td>
+              <td>2-4 cores</td>
+              <td>4-8Gi</td>
+              <td>50-100Gi</td>
+              <td>6</td>
+            </tr>
+            <tr>
+              <td><strong>Extra Large</strong></td>
+              <td>4-8 cores</td>
+              <td>8-16Gi</td>
+              <td>100-500Gi</td>
+              <td>9-12</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Network Topology Considerations</h3>
+
+      <div class="alert alert-info">
+        <div>
+          <strong>📡 Network Requirements:</strong>
+          <ul>
+            <li><strong>Cluster Mode:</strong> Low-latency network (&lt; 5ms between nodes)</li>
+            <li><strong>Sentinel Mode:</strong> Reliable network for Sentinel quorum</li>
+            <li><strong>Bandwidth:</strong> 1Gbps minimum, 10Gbps recommended</li>
+            <li><strong>Cluster Bus Port:</strong> Redis uses port+10000 for cluster communication</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>Storage Topology</h3>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Storage Type</th>
+              <th>IOPS</th>
+              <th>Latency</th>
+              <th>Use Case</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Local SSD</strong></td>
+              <td>Very High</td>
+              <td>&lt; 1ms</td>
+              <td>Max performance, node-bound</td>
+            </tr>
+            <tr>
+              <td><strong>Network SSD (Ceph)</strong></td>
+              <td>High</td>
+              <td>1-3ms</td>
+              <td>Best balance (performance + HA)</td>
+            </tr>
+            <tr>
+              <td><strong>Cloud Premium (EBS io2)</strong></td>
+              <td>High</td>
+              <td>2-5ms</td>
+              <td>Production cloud deployments</td>
+            </tr>
+            <tr>
+              <td><strong>Cloud Standard (EBS gp3)</strong></td>
+              <td>Medium</td>
+              <td>5-10ms</td>
+              <td>Cost-optimized production</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Topology Decision Matrix</h3>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <h4>Choose Cluster Mode If:</h4>
+          <ul>
+            <li>✅ Need &gt; 100k writes/sec</li>
+            <li>✅ Dataset &gt; 100GB</li>
+            <li>✅ Need horizontal scaling</li>
+            <li>✅ Can handle complexity</li>
+            <li>✅ Have 6+ nodes available</li>
+          </ul>
+        </div>
+
+        <div class="feature-card">
+          <h4>Choose Sentinel Mode If:</h4>
+          <ul>
+            <li>✅ Need HA but not sharding</li>
+            <li>✅ Dataset &lt; 100GB</li>
+            <li>✅ Need &lt; 100k writes/sec</li>
+            <li>✅ Want simpler setup</li>
+            <li>✅ Read-heavy workload</li>
+          </ul>
+        </div>
+
+        <div class="feature-card">
+          <h4>Choose Standalone If:</h4>
+          <ul>
+            <li>⚠️ Development only</li>
+            <li>⚠️ No HA needed</li>
+            <li>⚠️ Minimal resources</li>
+            <li>⚠️ Temporary workload</li>
+            <li>❌ Never for production!</li>
+          </ul>
+        </div>
+      </div>
+
       <h2>Next Steps</h2>
       <ul>
         <li><a href="getting-started.html">Getting Started</a> - Install and run your first cluster</li>
         <li><a href="configuration.html">Configuration</a> - Customize your deployment</li>
+        <li><a href="ha-modes.html">HA Modes Guide</a> - Deep dive into deployment modes</li>
+        <li><a href="scaling.html">Scaling Guide</a> - Learn how to scale your cluster</li>
       </ul>
     </div>
   </div>
