@@ -94,6 +94,32 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.updateStatus(ctx, redisCluster, "Error", "", fmt.Sprintf("failed to get StatefulSet: %v", err))
 	}
 
+	// Sync StatefulSet replicas with RedisCluster spec
+	// This ensures StatefulSet always matches the desired state from RedisCluster CRD
+	desiredReplicas := redisCluster.Spec.Replicas
+	currentStatefulSetReplicas := int32(0)
+	if statefulSet.Spec.Replicas != nil {
+		currentStatefulSetReplicas = *statefulSet.Spec.Replicas
+	}
+
+	if currentStatefulSetReplicas != desiredReplicas {
+		logger.Info("StatefulSet replicas out of sync, updating",
+			"current", currentStatefulSetReplicas,
+			"desired", desiredReplicas)
+
+		statefulSet.Spec.Replicas = &desiredReplicas
+		if err := r.Update(ctx, statefulSet); err != nil {
+			return r.updateStatus(ctx, redisCluster, "Error", "", fmt.Sprintf("failed to update StatefulSet replicas: %v", err))
+		}
+
+		logger.Info("StatefulSet replicas updated successfully",
+			"statefulSet", statefulSetName,
+			"replicas", desiredReplicas)
+
+		// Requeue to wait for pods to be created/deleted
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
 	// Get ready pods and their endpoints
 	readyEndpoints, err := r.getReadyEndpoints(ctx, targetNs, statefulSet)
 	if err != nil {
@@ -248,97 +274,128 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// CASE 3: Scale up - ONLY if new pods exist and not in cluster
-	// Do this FIRST and EXCLUSIVELY - don't do scale-down in same reconcile
-	var newEndpoints []string
-	for _, endpoint := range readyEndpoints {
-		ip := strings.Split(endpoint, ":")[0]
-		if !clusterIPs[ip] {
-			newEndpoints = append(newEndpoints, endpoint)
-			logger.Info("New pod detected not in cluster (reconcile)", "ip", ip, "endpoint", endpoint)
-		}
-	}
+	// Get desired replicas from RedisCluster spec (source of truth)
+	// Note: desiredReplicas was already set earlier when syncing StatefulSet
+	currentClusterSize := int32(len(healthyClusterNodes))
 
-	// Sanity check: if we detect many "new" nodes but ready pods haven't changed much,
-	// this is likely a bad cluster state read, not a legitimate scale-up
-	if len(newEndpoints) > 0 {
-		// If more than half of ready pods are "new", cluster state is likely corrupt
-		if len(newEndpoints) > len(readyEndpoints)/2 && len(healthyClusterNodes) > 0 {
-			logger.Error(fmt.Errorf("detected %d new nodes but only %d healthy cluster nodes - cluster state may be corrupt", len(newEndpoints), len(healthyClusterNodes)),
-				"Suspicious scale-up detection, skipping to avoid corruption")
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-		}
+	logger.Info("Cluster state comparison",
+		"desiredReplicas", desiredReplicas,
+		"currentClusterSize", currentClusterSize,
+		"readyPods", len(readyEndpoints),
+		"handshakeNodes", handshakeCount)
 
-		logger.Info("Scale-up operation", "newNodes", len(newEndpoints), "newEndpoints", newEndpoints)
-		if err := r.scaleUp(ctx, logger, runner, redisCluster, firstEndpoint, newEndpoints); err != nil {
-			return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-up failed: %v", err))
-		}
-		// Return immediately after scale-up to allow cluster to stabilize
-		// Next reconcile will verify the nodes are properly joined
-		logger.Info("Scale-up complete, requeuing to verify cluster state")
+	// IMPORTANT: If there are nodes in handshake state, wait for them to complete
+	// Don't perform any scale operations while nodes are joining
+	if handshakeCount > 0 {
+		logger.Info("Nodes in handshake state, waiting for cluster to stabilize before any scale operations",
+			"handshakeCount", handshakeCount)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	// CASE 4: Scale down - ONLY if StatefulSet replicas decreased (intentional scale-down)
-	// This prevents removing nodes when pods are just temporarily down/crashed
-	desiredReplicas := int32(0)
-	if statefulSet.Spec.Replicas != nil {
-		desiredReplicas = *statefulSet.Spec.Replicas
-	}
-
-	// Get all pods (not just ready ones) to check if they exist
-	var podList corev1.PodList
-	if err := r.List(ctx, &podList, client.InNamespace(targetNs), client.MatchingLabels{
-		"app": statefulSetName,
-	}); err != nil {
-		logger.Error(err, "Failed to list pods for scale-down check")
-	} else {
-		// Build set of all pod IPs (including not-ready pods)
-		allPodIPs := make(map[string]bool)
-		for _, pod := range podList.Items {
-			if pod.Status.PodIP != "" {
-				allPodIPs[pod.Status.PodIP] = true
+	// CASE 3: Cluster is already at desired size - no action needed
+	if currentClusterSize == desiredReplicas {
+		logger.Info("Cluster size matches desired replicas, no scale operation needed",
+			"currentSize", currentClusterSize,
+			"desired", desiredReplicas)
+		// Continue to final status update
+	} else if currentClusterSize < desiredReplicas {
+		// CASE 4: Scale up - current cluster size is less than desired
+		// Find pods that are ready but not in cluster yet
+		var newEndpoints []string
+		for _, endpoint := range readyEndpoints {
+			ip := strings.Split(endpoint, ":")[0]
+			if !clusterIPs[ip] {
+				newEndpoints = append(newEndpoints, endpoint)
+				logger.Info("New pod detected not in cluster", "ip", ip, "endpoint", endpoint)
 			}
 		}
 
-		// Only consider scale-down if:
-		// 1. StatefulSet replicas < number of cluster nodes (intentional scale-down)
-		// 2. Node IP has NO pod at all (not just "not ready", but completely gone)
-		if int32(len(healthyClusterNodes)) > desiredReplicas {
-			var nodesToRemove []rediscli.NodeInfo
-			for _, node := range healthyClusterNodes {
-				nodeIP := strings.Split(node.Addr, ":")[0]
+		// Only proceed with scale-up if:
+		// 1. We have new endpoints to add
+		// 2. Adding them won't exceed desired replicas
+		if len(newEndpoints) > 0 {
+			// Calculate how many nodes we should add
+			nodesToAdd := int(desiredReplicas - currentClusterSize)
+			if nodesToAdd > len(newEndpoints) {
+				nodesToAdd = len(newEndpoints)
+			}
 
-				// Only mark for removal if pod doesn't exist at all
-				if !allPodIPs[nodeIP] {
-					logger.Info("Node has no pod, marking for removal",
-						"nodeID", node.ID, "addr", node.Addr, "role", node.Role,
-						"desiredReplicas", desiredReplicas, "clusterNodes", len(healthyClusterNodes))
-					nodesToRemove = append(nodesToRemove, node)
+			// Only add the number of nodes needed to reach desired replicas
+			endpointsToAdd := newEndpoints[:nodesToAdd]
+
+			logger.Info("Scale-up operation",
+				"currentSize", currentClusterSize,
+				"desired", desiredReplicas,
+				"nodesToAdd", nodesToAdd,
+				"newEndpoints", endpointsToAdd)
+
+			if err := r.scaleUp(ctx, logger, runner, redisCluster, firstEndpoint, endpointsToAdd); err != nil {
+				return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-up failed: %v", err))
+			}
+
+			// Return immediately after scale-up to allow cluster to stabilize
+			logger.Info("Scale-up complete, requeuing to verify cluster state")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		} else {
+			// We need to scale up but don't have ready pods yet
+			logger.Info("Waiting for more pods to be ready for scale-up",
+				"currentSize", currentClusterSize,
+				"desired", desiredReplicas,
+				"readyPods", len(readyEndpoints))
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+	} else if currentClusterSize > desiredReplicas {
+		// CASE 5: Scale down - current cluster size is greater than desired
+		// This is an intentional scale-down operation
+		logger.Info("Scale-down needed",
+			"currentSize", currentClusterSize,
+			"desired", desiredReplicas,
+			"nodesToRemove", currentClusterSize-desiredReplicas)
+
+		// Determine which nodes to remove
+		// Strategy: Remove nodes with highest ordinal numbers first (redis-5, redis-4, etc.)
+		// This matches StatefulSet scale-down behavior
+		nodesToRemove := int(currentClusterSize - desiredReplicas)
+
+		// Sort nodes by ordinal (extract from address/name)
+		sortedNodes := make([]rediscli.NodeInfo, len(healthyClusterNodes))
+		copy(sortedNodes, healthyClusterNodes)
+
+		// Simple sort by IP address (which corresponds to ordinal in StatefulSet)
+		sort.Slice(sortedNodes, func(i, j int) bool {
+			return sortedNodes[i].Addr > sortedNodes[j].Addr // Descending order
+		})
+
+		// Take the nodes with highest ordinals
+		var nodesToRemoveList []rediscli.NodeInfo
+		for i := 0; i < nodesToRemove && i < len(sortedNodes); i++ {
+			nodesToRemoveList = append(nodesToRemoveList, sortedNodes[i])
+			logger.Info("Marking node for removal",
+				"nodeID", sortedNodes[i].ID,
+				"addr", sortedNodes[i].Addr,
+				"role", sortedNodes[i].Role)
+		}
+
+		if len(nodesToRemoveList) > 0 {
+			logger.Info("Executing scale-down operation",
+				"nodesToRemove", len(nodesToRemoveList),
+				"currentSize", currentClusterSize,
+				"desired", desiredReplicas)
+
+			if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemoveList, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
+				return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
+			}
+
+			// Cleanup PVCs if enabled
+			if redisCluster.Spec.AutoPvcCleanup {
+				if err := r.cleanupOrphanedPVCs(ctx, logger, redisCluster, targetNs, statefulSetName, nodesToRemoveList); err != nil {
+					logger.Error(err, "Failed to cleanup PVCs, continuing anyway")
 				}
 			}
 
-			if len(nodesToRemove) > 0 {
-				logger.Info("Intentional scale-down operation",
-					"nodesToRemove", len(nodesToRemove),
-					"desiredReplicas", desiredReplicas,
-					"currentClusterNodes", len(healthyClusterNodes))
-
-				if err := r.scaleDown(ctx, logger, runner, clusterNodes, nodesToRemove, firstEndpoint, redisCluster.Spec.AutoRebalance); err != nil {
-					return r.updateStatus(ctx, redisCluster, "Error", clusterState, fmt.Sprintf("scale-down failed: %v", err))
-				}
-
-				// Cleanup PVCs if enabled
-				if redisCluster.Spec.AutoPvcCleanup {
-					if err := r.cleanupOrphanedPVCs(ctx, logger, redisCluster, targetNs, statefulSetName, nodesToRemove); err != nil {
-						logger.Error(err, "Failed to cleanup PVCs, continuing anyway")
-					}
-				}
-
-				// Return immediately after scale-down
-				logger.Info("Scale-down complete, requeuing to verify cluster state")
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-			}
+			// Return immediately after scale-down
+			logger.Info("Scale-down complete, requeuing to verify cluster state")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 	}
 
@@ -797,16 +854,21 @@ func isPodReady(pod *corev1.Pod) bool {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *RedisClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Register background scale watcher as a runnable
-	// This ensures watcher lifecycle is managed by the manager
-	if err := mgr.Add(&scaleWatcherRunnable{reconciler: r}); err != nil {
-		return err
-	}
+	// Background scale watcher is disabled because:
+	// 1. Pod watch already triggers reconciliation when pods change
+	// 2. Having both can cause race conditions and duplicate scale operations
+	// 3. Reconcile loop already handles all scale detection logic
+	//
+	// If background watcher is needed in the future, uncomment below:
+	// if err := mgr.Add(&scaleWatcherRunnable{reconciler: r}); err != nil {
+	// 	return err
+	// }
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1alpha1.RedisCluster{}).
 		Owns(&appsv1.StatefulSet{}).
 		// Watch Pods with redis label and map them to RedisCluster
+		// This ensures reconciliation is triggered when pods are added/removed/changed
 		Watches(
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(r.findRedisClusterForPod),
